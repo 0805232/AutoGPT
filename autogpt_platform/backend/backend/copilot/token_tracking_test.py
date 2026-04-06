@@ -298,7 +298,7 @@ class TestPlatformCostLogging:
                 new_callable=AsyncMock,
             ),
             patch(
-                "backend.copilot.token_tracking.log_platform_cost_safe",
+                "backend.data.platform_cost.log_platform_cost_safe",
                 new=mock_log,
             ),
         ):
@@ -337,7 +337,7 @@ class TestPlatformCostLogging:
                 new_callable=AsyncMock,
             ),
             patch(
-                "backend.copilot.token_tracking.log_platform_cost_safe",
+                "backend.data.platform_cost.log_platform_cost_safe",
                 new=mock_log,
             ),
         ):
@@ -368,7 +368,7 @@ class TestPlatformCostLogging:
                 new_callable=AsyncMock,
             ),
             patch(
-                "backend.copilot.token_tracking.log_platform_cost_safe",
+                "backend.data.platform_cost.log_platform_cost_safe",
                 new=mock_log,
             ),
         ):
@@ -391,7 +391,7 @@ class TestPlatformCostLogging:
                 new_callable=AsyncMock,
             ),
             patch(
-                "backend.copilot.token_tracking.log_platform_cost_safe",
+                "backend.data.platform_cost.log_platform_cost_safe",
                 new=mock_log,
             ),
         ):
@@ -418,7 +418,7 @@ class TestPlatformCostLogging:
                 new_callable=AsyncMock,
             ),
             patch(
-                "backend.copilot.token_tracking.log_platform_cost_safe",
+                "backend.data.platform_cost.log_platform_cost_safe",
                 new=mock_log,
             ),
         ):
@@ -445,7 +445,7 @@ class TestPlatformCostLogging:
                 new_callable=AsyncMock,
             ),
             patch(
-                "backend.copilot.token_tracking.log_platform_cost_safe",
+                "backend.data.platform_cost.log_platform_cost_safe",
                 new=mock_log,
             ),
         ):
@@ -470,7 +470,7 @@ class TestPlatformCostLogging:
                 new_callable=AsyncMock,
             ),
             patch(
-                "backend.copilot.token_tracking.log_platform_cost_safe",
+                "backend.data.platform_cost.log_platform_cost_safe",
                 new=mock_log,
             ),
         ):
