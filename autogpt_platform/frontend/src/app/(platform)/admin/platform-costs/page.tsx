@@ -44,7 +44,6 @@ export default async function PlatformCostDashboardPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  "use server";
   const withAdminAccess = await withRoleAccess(["admin"]);
   const ProtectedDashboard = await withAdminAccess(PlatformCostDashboard);
   return <ProtectedDashboard searchParams={await searchParams} />;

@@ -143,12 +143,18 @@ function PlatformCostContent({ searchParams }: Props) {
             </div>
           )}
 
-          <div role="tablist" className="flex gap-2 border-b">
+          <div
+            role="tablist"
+            aria-label="Cost view tabs"
+            className="flex gap-2 border-b"
+          >
             {["overview", "by-user", "logs"].map((t) => (
               <button
                 key={t}
+                id={`tab-${t}`}
                 role="tab"
                 aria-selected={tab === t}
+                aria-controls={`tabpanel-${t}`}
                 onClick={() => updateUrl({ tab: t, page: "1" })}
                 className={`px-4 py-2 text-sm font-medium ${tab === t ? "border-b-2 border-blue-600 text-blue-600" : "text-muted-foreground hover:text-foreground"}`}
               >
@@ -162,21 +168,35 @@ function PlatformCostContent({ searchParams }: Props) {
           </div>
 
           {tab === "overview" && dashboard && (
-            <ProviderTable
-              data={dashboard.by_provider}
-              rateOverrides={rateOverrides}
-              onRateOverride={handleRateOverride}
-            />
+            <div
+              role="tabpanel"
+              id="tabpanel-overview"
+              aria-labelledby="tab-overview"
+            >
+              <ProviderTable
+                data={dashboard.by_provider}
+                rateOverrides={rateOverrides}
+                onRateOverride={handleRateOverride}
+              />
+            </div>
           )}
           {tab === "by-user" && dashboard && (
-            <UserTable data={dashboard.by_user} />
+            <div
+              role="tabpanel"
+              id="tabpanel-by-user"
+              aria-labelledby="tab-by-user"
+            >
+              <UserTable data={dashboard.by_user} />
+            </div>
           )}
           {tab === "logs" && (
-            <LogsTable
-              logs={logs}
-              pagination={pagination}
-              onPageChange={(p) => updateUrl({ page: p.toString() })}
-            />
+            <div role="tabpanel" id="tabpanel-logs" aria-labelledby="tab-logs">
+              <LogsTable
+                logs={logs}
+                pagination={pagination}
+                onPageChange={(p) => updateUrl({ page: p.toString() })}
+              />
+            </div>
           )}
         </>
       )}

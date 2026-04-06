@@ -9,12 +9,11 @@ Both the baseline (OpenRouter) and SDK (Anthropic) service layers need to:
 This module extracts that common logic so both paths stay in sync.
 """
 
-import asyncio
 import logging
 
 from backend.data.platform_cost import (
     PlatformCostEntry,
-    log_platform_cost_safe,
+    schedule_cost_log,
     usd_to_microdollars,
 )
 
@@ -27,15 +26,6 @@ logger = logging.getLogger(__name__)
 # block/credential in the block_cost_config or credentials_store tables).
 COPILOT_BLOCK_ID = "copilot"
 COPILOT_CREDENTIAL_ID = "copilot_system"
-
-# Hold strong references to in-flight log tasks to prevent GC.
-_pending_log_tasks: set[asyncio.Task] = set()
-
-
-def _schedule_log(entry: PlatformCostEntry) -> None:
-    task = asyncio.create_task(log_platform_cost_safe(entry))
-    _pending_log_tasks.add(task)
-    task.add_done_callback(_pending_log_tasks.discard)
 
 
 def _copilot_block_name(log_prefix: str) -> str:
@@ -127,8 +117,11 @@ async def persist_and_record_usage(
         except Exception as usage_err:
             logger.warning(f"{log_prefix} Failed to record token usage: {usage_err}")
 
-    # Log to PlatformCostLog for admin cost dashboard
-    if user_id and total_tokens > 0:
+    # Log to PlatformCostLog for admin cost dashboard.
+    # Include entries where cost_usd is set even if token count is 0
+    # (e.g. fully-cached Anthropic responses where only cache tokens
+    # accumulate a charge without incrementing total_tokens).
+    if user_id and (total_tokens > 0 or cost_usd is not None):
         cost_float = None
         if cost_usd is not None:
             try:
@@ -146,7 +139,7 @@ async def persist_and_record_usage(
             tracking_type = "tokens"
             tracking_amount = total_tokens
 
-        _schedule_log(
+        schedule_cost_log(
             PlatformCostEntry(
                 user_id=user_id,
                 graph_exec_id=session_id,

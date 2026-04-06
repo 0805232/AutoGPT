@@ -19,8 +19,11 @@ function UserTable({ data }: Props) {
           </tr>
         </thead>
         <tbody>
-          {data.map((row) => (
-            <tr key={row.user_id} className="border-b hover:bg-muted">
+          {data.map((row, idx) => (
+            <tr
+              key={row.user_id ?? `unknown-${idx}`}
+              className="border-b hover:bg-muted"
+            >
               <td className="px-4 py-3">
                 <div className="font-medium">{row.email || "Unknown"}</div>
                 <div className="text-xs text-muted-foreground">

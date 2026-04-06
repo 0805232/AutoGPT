@@ -1,6 +1,5 @@
 """Helpers for platform cost tracking on system-credential block executions."""
 
-import asyncio
 import logging
 from typing import Any, cast
 
@@ -9,7 +8,7 @@ from backend.data.execution import NodeExecutionEntry
 from backend.data.model import NodeExecutionStats
 from backend.data.platform_cost import (
     PlatformCostEntry,
-    log_platform_cost_safe,
+    schedule_cost_log,
     usd_to_microdollars,
 )
 from backend.executor.utils import block_usage_cost
@@ -31,16 +30,6 @@ _WALLTIME_BILLED_PROVIDERS = frozenset(
         ProviderName.REPLICATE.value,
     }
 )
-
-# Hold strong references to in-flight log tasks so the event loop doesn't
-# garbage-collect them mid-execution. Tasks remove themselves on completion.
-_pending_log_tasks: set[asyncio.Task] = set()
-
-
-def _schedule_log(entry: PlatformCostEntry) -> None:
-    task = asyncio.create_task(log_platform_cost_safe(entry))
-    _pending_log_tasks.add(task)
-    task.add_done_callback(_pending_log_tasks.discard)
 
 
 def resolve_tracking(
@@ -160,7 +149,7 @@ async def log_system_credential_cost(
             if stats.provider_cost is not None:
                 meta["provider_cost_usd"] = stats.provider_cost
 
-            _schedule_log(
+            schedule_cost_log(
                 PlatformCostEntry(
                     user_id=node_exec.user_id,
                     graph_exec_id=node_exec.graph_exec_id,

@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from pydantic import BaseModel
@@ -11,6 +11,14 @@ from backend.data.db import execute_raw_with_schema, query_raw_with_schema
 logger = logging.getLogger(__name__)
 
 MICRODOLLARS_PER_USD = 1_000_000
+
+# Dashboard query limits — keep in sync with the SQL queries below
+MAX_PROVIDER_ROWS = 500
+MAX_USER_ROWS = 100
+
+# Default date range for dashboard queries when no start date is provided.
+# Prevents full-table scans on large deployments.
+DEFAULT_DASHBOARD_DAYS = 30
 
 
 def usd_to_microdollars(cost_usd: float | None) -> int | None:
@@ -87,6 +95,22 @@ async def log_platform_cost_safe(entry: PlatformCostEntry) -> None:
             entry.provider,
             entry.block_name,
         )
+
+
+# Hold strong references to in-flight log tasks to prevent GC.
+# Tasks remove themselves on completion via add_done_callback.
+_pending_log_tasks: set["asyncio.Task[None]"] = set()
+
+
+def schedule_cost_log(entry: PlatformCostEntry) -> None:
+    """Schedule a fire-and-forget cost log insert.
+
+    Shared by cost_tracking and token_tracking so both modules drain
+    the same task set during shutdown.
+    """
+    task = asyncio.create_task(log_platform_cost_safe(entry))
+    _pending_log_tasks.add(task)
+    task.add_done_callback(_pending_log_tasks.discard)
 
 
 def _json_or_none(data: dict[str, Any] | None) -> str | None:
@@ -185,7 +209,12 @@ async def get_platform_cost_dashboard(
     different billing models (e.g. "openai" with both "tokens" and "cost_usd"
     if pricing is later added for some entries). Frontend treats each row
     independently rather than as a provider primary key.
+
+    Defaults to the last DEFAULT_DASHBOARD_DAYS days when no start date is
+    provided to avoid full-table scans on large deployments.
     """
+    if start is None:
+        start = datetime.now(timezone.utc) - timedelta(days=DEFAULT_DASHBOARD_DAYS)
     where_p, params_p = _build_where(start, end, provider, user_id, "p")
 
     by_provider_rows, user_count_rows, by_user_rows = await asyncio.gather(
@@ -206,7 +235,7 @@ async def get_platform_cost_dashboard(
             GROUP BY p."provider",
                 COALESCE(p."trackingType", p."metadata"->>'tracking_type')
             ORDER BY total_cost DESC
-            LIMIT 500
+            LIMIT {MAX_PROVIDER_ROWS}
             """,
             *params_p,
         ),
@@ -232,7 +261,7 @@ async def get_platform_cost_dashboard(
             WHERE {where_p}
             GROUP BY p."userId", u."email"
             ORDER BY total_cost DESC
-            LIMIT 100
+            LIMIT {MAX_USER_ROWS}
             """,
             *params_p,
         ),

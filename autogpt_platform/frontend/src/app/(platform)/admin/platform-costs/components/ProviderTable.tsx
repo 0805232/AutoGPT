@@ -73,10 +73,12 @@ function ProviderTable({ data, rateOverrides, onRateOverride }: Props) {
                         min="0"
                         className="w-24 rounded border px-2 py-1 text-right text-xs"
                         placeholder={fallback !== null ? String(fallback) : "0"}
-                        defaultValue={currentRate ?? ""}
+                        value={currentRate ?? ""}
                         onChange={(e) => {
                           const val = parseFloat(e.target.value);
                           if (!isNaN(val)) onRateOverride(key, val);
+                          else if (e.target.value === "")
+                            onRateOverride(key, 0);
                         }}
                       />
                       <span

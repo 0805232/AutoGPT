@@ -149,6 +149,14 @@ class TestResolveTracking:
         assert tt == "cost_usd"
         assert amt == 0.01
 
+    def test_provider_cost_zero_is_not_none(self):
+        """provider_cost=0.0 is falsy but should still be tracked as cost_usd
+        (e.g. free-tier or fully-cached responses from OpenRouter)."""
+        stats = self._stats(provider_cost=0.0)
+        tt, amt = resolve_tracking("open_router", stats, {})
+        assert tt == "cost_usd"
+        assert amt == 0.0
+
     def test_tokens_take_precedence_over_provider_specific(self):
         stats = self._stats(input_token_count=100, walltime=10.0)
         tt, amt = resolve_tracking("fal", stats, {})
@@ -194,9 +202,7 @@ class TestLogSystemCredentialCost:
     @pytest.mark.asyncio
     async def test_skips_dry_run(self):
         mock_log = AsyncMock()
-        with patch(
-            "backend.executor.cost_tracking.log_platform_cost_safe", new=mock_log
-        ):
+        with patch("backend.data.platform_cost.log_platform_cost_safe", new=mock_log):
             node_exec = _make_node_exec(dry_run=True)
             block = _make_block()
             stats = NodeExecutionStats()
@@ -206,9 +212,7 @@ class TestLogSystemCredentialCost:
     @pytest.mark.asyncio
     async def test_skips_when_no_credential_fields(self):
         mock_log = AsyncMock()
-        with patch(
-            "backend.executor.cost_tracking.log_platform_cost_safe", new=mock_log
-        ):
+        with patch("backend.data.platform_cost.log_platform_cost_safe", new=mock_log):
             node_exec = _make_node_exec(inputs={})
             block = _make_block(has_credentials=False)
             stats = NodeExecutionStats()
@@ -218,9 +222,7 @@ class TestLogSystemCredentialCost:
     @pytest.mark.asyncio
     async def test_skips_when_cred_data_missing(self):
         mock_log = AsyncMock()
-        with patch(
-            "backend.executor.cost_tracking.log_platform_cost_safe", new=mock_log
-        ):
+        with patch("backend.data.platform_cost.log_platform_cost_safe", new=mock_log):
             node_exec = _make_node_exec(inputs={})
             block = _make_block()
             stats = NodeExecutionStats()
@@ -231,9 +233,7 @@ class TestLogSystemCredentialCost:
     async def test_skips_when_not_system_credential(self):
         mock_log = AsyncMock()
         with (
-            patch(
-                "backend.executor.cost_tracking.log_platform_cost_safe", new=mock_log
-            ),
+            patch("backend.data.platform_cost.log_platform_cost_safe", new=mock_log),
             patch(
                 "backend.executor.cost_tracking.is_system_credential",
                 return_value=False,
@@ -253,9 +253,7 @@ class TestLogSystemCredentialCost:
     async def test_logs_with_system_credential(self):
         mock_log = AsyncMock()
         with (
-            patch(
-                "backend.executor.cost_tracking.log_platform_cost_safe", new=mock_log
-            ),
+            patch("backend.data.platform_cost.log_platform_cost_safe", new=mock_log),
             patch(
                 "backend.executor.cost_tracking.is_system_credential", return_value=True
             ),
@@ -292,9 +290,7 @@ class TestLogSystemCredentialCost:
     async def test_logs_with_provider_cost(self):
         mock_log = AsyncMock()
         with (
-            patch(
-                "backend.executor.cost_tracking.log_platform_cost_safe", new=mock_log
-            ),
+            patch("backend.data.platform_cost.log_platform_cost_safe", new=mock_log),
             patch(
                 "backend.executor.cost_tracking.is_system_credential", return_value=True
             ),
@@ -323,9 +319,7 @@ class TestLogSystemCredentialCost:
     async def test_model_name_enum_converted_to_str(self):
         mock_log = AsyncMock()
         with (
-            patch(
-                "backend.executor.cost_tracking.log_platform_cost_safe", new=mock_log
-            ),
+            patch("backend.data.platform_cost.log_platform_cost_safe", new=mock_log),
             patch(
                 "backend.executor.cost_tracking.is_system_credential", return_value=True
             ),
@@ -357,9 +351,7 @@ class TestLogSystemCredentialCost:
     async def test_model_name_dict_becomes_none(self):
         mock_log = AsyncMock()
         with (
-            patch(
-                "backend.executor.cost_tracking.log_platform_cost_safe", new=mock_log
-            ),
+            patch("backend.data.platform_cost.log_platform_cost_safe", new=mock_log),
             patch(
                 "backend.executor.cost_tracking.is_system_credential", return_value=True
             ),
@@ -383,12 +375,33 @@ class TestLogSystemCredentialCost:
         assert entry.model is None
 
     @pytest.mark.asyncio
+    async def test_does_not_raise_when_block_usage_cost_raises(self):
+        """log_system_credential_cost must swallow exceptions from block_usage_cost."""
+        with (
+            patch("backend.data.platform_cost.log_platform_cost_safe", new=AsyncMock()),
+            patch(
+                "backend.executor.cost_tracking.is_system_credential", return_value=True
+            ),
+            patch(
+                "backend.executor.cost_tracking.block_usage_cost",
+                side_effect=RuntimeError("pricing lookup failed"),
+            ),
+        ):
+            node_exec = _make_node_exec(
+                inputs={
+                    "credentials": {"id": "sys-cred", "provider": "openai"},
+                }
+            )
+            block = _make_block()
+            stats = NodeExecutionStats()
+            # Should not raise — outer except must catch block_usage_cost error
+            await log_system_credential_cost(node_exec, block, stats)
+
+    @pytest.mark.asyncio
     async def test_round_instead_of_int_for_microdollars(self):
         mock_log = AsyncMock()
         with (
-            patch(
-                "backend.executor.cost_tracking.log_platform_cost_safe", new=mock_log
-            ),
+            patch("backend.data.platform_cost.log_platform_cost_safe", new=mock_log),
             patch(
                 "backend.executor.cost_tracking.is_system_credential", return_value=True
             ),
@@ -475,9 +488,7 @@ class TestManagerCostTrackingIntegration:
         have been accumulated by merge_stats across multiple yield steps."""
         mock_log = AsyncMock()
         with (
-            patch(
-                "backend.executor.cost_tracking.log_platform_cost_safe", new=mock_log
-            ),
+            patch("backend.data.platform_cost.log_platform_cost_safe", new=mock_log),
             patch(
                 "backend.executor.cost_tracking.is_system_credential", return_value=True
             ),

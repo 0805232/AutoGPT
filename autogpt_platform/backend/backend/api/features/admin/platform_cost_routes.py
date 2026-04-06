@@ -1,5 +1,4 @@
 import logging
-import typing
 from datetime import datetime
 
 from autogpt_libs.auth import get_user_id, requires_admin_user
@@ -36,12 +35,12 @@ class PlatformCostLogsResponse(BaseModel):
 )
 async def get_cost_dashboard(
     admin_user_id: str = Security(get_user_id),
-    start: typing.Optional[datetime] = Query(None),
-    end: typing.Optional[datetime] = Query(None),
-    provider: typing.Optional[str] = Query(None),
-    user_id: typing.Optional[str] = Query(None),
+    start: datetime | None = Query(None),
+    end: datetime | None = Query(None),
+    provider: str | None = Query(None),
+    user_id: str | None = Query(None),
 ):
-    logger.info(f"Admin {admin_user_id} fetching platform cost dashboard")
+    logger.info("Admin %s fetching platform cost dashboard", admin_user_id)
     return await get_platform_cost_dashboard(
         start=start,
         end=end,
@@ -57,14 +56,14 @@ async def get_cost_dashboard(
 )
 async def get_cost_logs(
     admin_user_id: str = Security(get_user_id),
-    start: typing.Optional[datetime] = Query(None),
-    end: typing.Optional[datetime] = Query(None),
-    provider: typing.Optional[str] = Query(None),
-    user_id: typing.Optional[str] = Query(None),
+    start: datetime | None = Query(None),
+    end: datetime | None = Query(None),
+    provider: str | None = Query(None),
+    user_id: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ):
-    logger.info(f"Admin {admin_user_id} fetching platform cost logs")
+    logger.info("Admin %s fetching platform cost logs", admin_user_id)
     logs, total = await get_platform_cost_logs(
         start=start,
         end=end,

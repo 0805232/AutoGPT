@@ -3,6 +3,13 @@ import type { Pagination } from "@/app/api/__generated__/models/pagination";
 import { formatDuration, formatMicrodollars, formatTokens } from "../helpers";
 import { trackingBadge } from "./TrackingBadge";
 
+function formatLogDate(value: unknown): string {
+  if (value instanceof Date) return value.toLocaleString();
+  if (typeof value === "string" || typeof value === "number")
+    return new Date(value).toLocaleString();
+  return "-";
+}
+
 interface Props {
   logs: CostLogRow[];
   pagination: Pagination | null;
@@ -32,9 +39,7 @@ function LogsTable({ logs, pagination, onPageChange }: Props) {
             {logs.map((log) => (
               <tr key={log.id} className="border-b hover:bg-muted">
                 <td className="whitespace-nowrap px-3 py-2 text-xs">
-                  {new Date(
-                    log.created_at as unknown as string,
-                  ).toLocaleString()}
+                  {formatLogDate(log.created_at)}
                 </td>
                 <td className="px-3 py-2 text-xs">
                   {log.email ||

@@ -6,6 +6,8 @@ import pytest
 import pytest_mock
 from autogpt_libs.auth.jwt_utils import get_jwt_payload
 
+from backend.data.platform_cost import PlatformCostDashboard
+
 from .platform_cost_routes import router as platform_cost_router
 
 app = fastapi.FastAPI()
@@ -25,25 +27,16 @@ def setup_app_admin_auth(mock_jwt_admin):
 def test_get_dashboard_success(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
-    mock_dashboard = AsyncMock(
-        return_value=AsyncMock(
-            by_provider=[],
-            by_user=[],
-            total_cost_microdollars=0,
-            total_requests=0,
-            total_users=0,
-            model_dump=lambda **_: {
-                "by_provider": [],
-                "by_user": [],
-                "total_cost_microdollars": 0,
-                "total_requests": 0,
-                "total_users": 0,
-            },
-        )
+    real_dashboard = PlatformCostDashboard(
+        by_provider=[],
+        by_user=[],
+        total_cost_microdollars=0,
+        total_requests=0,
+        total_users=0,
     )
     mocker.patch(
         "backend.api.features.admin.platform_cost_routes.get_platform_cost_dashboard",
-        mock_dashboard,
+        AsyncMock(return_value=real_dashboard),
     )
 
     response = client.get("/platform-costs/dashboard")
@@ -72,22 +65,14 @@ def test_get_logs_success(
 def test_get_dashboard_with_filters(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
-    mock_dashboard = AsyncMock(
-        return_value=AsyncMock(
-            by_provider=[],
-            by_user=[],
-            total_cost_microdollars=0,
-            total_requests=0,
-            total_users=0,
-            model_dump=lambda **_: {
-                "by_provider": [],
-                "by_user": [],
-                "total_cost_microdollars": 0,
-                "total_requests": 0,
-                "total_users": 0,
-            },
-        )
+    real_dashboard = PlatformCostDashboard(
+        by_provider=[],
+        by_user=[],
+        total_cost_microdollars=0,
+        total_requests=0,
+        total_users=0,
     )
+    mock_dashboard = AsyncMock(return_value=real_dashboard)
     mocker.patch(
         "backend.api.features.admin.platform_cost_routes.get_platform_cost_dashboard",
         mock_dashboard,
@@ -156,3 +141,27 @@ def test_get_dashboard_rejects_non_admin(mock_jwt_user, mock_jwt_admin) -> None:
         assert response.status_code == 403
     finally:
         app.dependency_overrides[get_jwt_payload] = mock_jwt_admin["get_jwt_payload"]
+
+
+def test_get_logs_invalid_page_size_too_large() -> None:
+    """page_size > 200 must be rejected with 422."""
+    response = client.get("/platform-costs/logs", params={"page_size": 201})
+    assert response.status_code == 422
+
+
+def test_get_logs_invalid_page_size_zero() -> None:
+    """page_size = 0 (below ge=1) must be rejected with 422."""
+    response = client.get("/platform-costs/logs", params={"page_size": 0})
+    assert response.status_code == 422
+
+
+def test_get_logs_invalid_page_negative() -> None:
+    """page < 1 must be rejected with 422."""
+    response = client.get("/platform-costs/logs", params={"page": 0})
+    assert response.status_code == 422
+
+
+def test_get_dashboard_invalid_date_format() -> None:
+    """Malformed start date must be rejected with 422."""
+    response = client.get("/platform-costs/dashboard", params={"start": "not-a-date"})
+    assert response.status_code == 422
