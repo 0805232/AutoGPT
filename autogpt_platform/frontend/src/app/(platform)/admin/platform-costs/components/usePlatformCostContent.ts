@@ -7,7 +7,7 @@ import type { CostLogRow } from "@/app/api/__generated__/models/costLogRow";
 import type { Pagination } from "@/app/api/__generated__/models/pagination";
 import type { PlatformCostLogsResponse } from "@/app/api/__generated__/models/platformCostLogsResponse";
 import { getPlatformCostDashboard, getPlatformCostLogs } from "../actions";
-import { estimateCostForRow } from "../helpers";
+import { estimateCostForRow, toLocalInput, toUtcIso } from "../helpers";
 
 interface InitialSearchParams {
   start?: string;
@@ -16,23 +16,6 @@ interface InitialSearchParams {
   user_id?: string;
   page?: string;
   tab?: string;
-}
-
-// URL holds UTC ISO; datetime-local inputs need local "YYYY-MM-DDTHH:mm".
-function toLocalInput(iso: string) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-// datetime-local emits naive local time; convert to UTC ISO so the
-// backend filter window matches what the admin sees in their browser.
-function toUtcIso(local: string) {
-  if (!local) return "";
-  const d = new Date(local);
-  return isNaN(d.getTime()) ? "" : d.toISOString();
 }
 
 export function usePlatformCostContent(searchParams: InitialSearchParams) {

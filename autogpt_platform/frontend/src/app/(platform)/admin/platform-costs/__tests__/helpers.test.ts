@@ -7,6 +7,8 @@ import {
   formatDuration,
   estimateCostForRow,
   trackingValue,
+  toLocalInput,
+  toUtcIso,
 } from "../helpers";
 
 function makeRow(overrides: Partial<ProviderCostSummary>): ProviderCostSummary {
@@ -263,5 +265,36 @@ describe("trackingValue", () => {
       total_duration_seconds: 45,
     });
     expect(trackingValue(row)).toBe("45.0s");
+  });
+});
+
+describe("toLocalInput", () => {
+  it("returns empty string for empty input", () => {
+    expect(toLocalInput("")).toBe("");
+  });
+
+  it("returns empty string for invalid ISO", () => {
+    expect(toLocalInput("not-a-date")).toBe("");
+  });
+
+  it("converts UTC ISO to local datetime-local format", () => {
+    const result = toLocalInput("2026-01-15T12:30:00Z");
+    // Format should be YYYY-MM-DDTHH:mm
+    expect(result).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+  });
+});
+
+describe("toUtcIso", () => {
+  it("returns empty string for empty input", () => {
+    expect(toUtcIso("")).toBe("");
+  });
+
+  it("returns empty string for invalid local time", () => {
+    expect(toUtcIso("not-a-date")).toBe("");
+  });
+
+  it("converts local datetime-local to ISO string", () => {
+    const result = toUtcIso("2026-01-15T12:30");
+    expect(result).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
   });
 });

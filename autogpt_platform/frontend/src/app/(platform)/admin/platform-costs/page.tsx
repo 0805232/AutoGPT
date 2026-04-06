@@ -21,7 +21,7 @@ function PlatformCostDashboard({
       <div className="flex flex-col gap-4">
         <div>
           <h1 className="text-3xl font-bold">Platform Costs</h1>
-          <p className="text-gray-500">
+          <p className="text-muted-foreground">
             Track real API costs incurred by system credentials across providers
           </p>
         </div>

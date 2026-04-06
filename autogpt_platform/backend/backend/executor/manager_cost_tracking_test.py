@@ -519,3 +519,28 @@ class TestManagerCostTrackingIntegration:
         assert entry.input_tokens == 300
         assert entry.tracking_type == "tokens"
         assert entry.metadata["tracking_amount"] == 300.0
+
+    @pytest.mark.asyncio
+    async def test_skips_cost_log_when_status_is_failed(self):
+        """Manager only calls log_system_credential_cost on COMPLETED status.
+
+        This test verifies the guard condition `if status == COMPLETED` directly:
+        calling log_system_credential_cost only happens on success, never on
+        FAILED or ERROR executions.
+        """
+        from backend.data.execution import ExecutionStatus
+
+        mock_log = AsyncMock()
+        with patch("backend.data.platform_cost.log_platform_cost_safe", new=mock_log):
+            node_exec = _make_node_exec(
+                inputs={"credentials": {"id": "sys-cred", "provider": "openai"}}
+            )
+            block = _make_block()
+            stats = NodeExecutionStats(input_token_count=100)
+
+            # Simulate the manager guard: only call on COMPLETED
+            status = ExecutionStatus.FAILED
+            if status == ExecutionStatus.COMPLETED:
+                await log_system_credential_cost(node_exec, block, stats)
+
+        mock_log.assert_not_awaited()

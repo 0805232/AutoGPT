@@ -1,4 +1,8 @@
-function trackingBadge(trackingType: string | null | undefined) {
+function TrackingBadge({
+  trackingType,
+}: {
+  trackingType: string | null | undefined;
+}) {
   const colors: Record<string, string> = {
     cost_usd: "bg-green-500/10 text-green-700 dark:text-green-400",
     tokens: "bg-blue-500/10 text-blue-700 dark:text-blue-400",
@@ -19,4 +23,4 @@ function trackingBadge(trackingType: string | null | undefined) {
   );
 }
 
-export { trackingBadge };
+export { TrackingBadge };

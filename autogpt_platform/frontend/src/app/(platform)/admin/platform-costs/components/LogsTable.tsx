@@ -1,7 +1,7 @@
 import type { CostLogRow } from "@/app/api/__generated__/models/costLogRow";
 import type { Pagination } from "@/app/api/__generated__/models/pagination";
 import { formatDuration, formatMicrodollars, formatTokens } from "../helpers";
-import { trackingBadge } from "./TrackingBadge";
+import { TrackingBadge } from "./TrackingBadge";
 
 function formatLogDate(value: unknown): string {
   if (value instanceof Date) return value.toLocaleString();
@@ -50,7 +50,7 @@ function LogsTable({ logs, pagination, onPageChange }: Props) {
                 </td>
                 <td className="px-3 py-2 text-xs">{log.provider}</td>
                 <td className="px-3 py-2 text-xs">
-                  {trackingBadge(log.tracking_type)}
+                  <TrackingBadge trackingType={log.tracking_type} />
                 </td>
                 <td className="px-3 py-2 text-xs">{log.model || "-"}</td>
                 <td className="px-3 py-2 text-right text-xs">

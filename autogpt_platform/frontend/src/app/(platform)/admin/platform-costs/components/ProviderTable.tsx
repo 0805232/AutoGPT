@@ -7,7 +7,7 @@ import {
   rateUnitLabel,
   trackingValue,
 } from "../helpers";
-import { trackingBadge } from "./TrackingBadge";
+import { TrackingBadge } from "./TrackingBadge";
 
 interface Props {
   data: ProviderCostSummary[];
@@ -46,7 +46,7 @@ function ProviderTable({ data, rateOverrides, onRateOverride }: Props) {
               <tr key={key} className="border-b hover:bg-muted">
                 <td className="px-4 py-3 font-medium">{row.provider}</td>
                 <td className="px-4 py-3">
-                  {trackingBadge(row.tracking_type)}
+                  <TrackingBadge trackingType={row.tracking_type} />
                 </td>
                 <td className="px-4 py-3 text-right">{trackingValue(row)}</td>
                 <td className="px-4 py-3 text-right">
@@ -71,6 +71,7 @@ function ProviderTable({ data, rateOverrides, onRateOverride }: Props) {
                         type="number"
                         step="0.0001"
                         min="0"
+                        aria-label={`Rate for ${row.provider} (${tt})`}
                         className="w-24 rounded border px-2 py-1 text-right text-xs"
                         placeholder={fallback !== null ? String(fallback) : "0"}
                         value={currentRate ?? ""}

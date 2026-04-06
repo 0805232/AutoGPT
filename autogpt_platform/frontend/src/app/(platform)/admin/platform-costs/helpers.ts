@@ -192,3 +192,20 @@ export function trackingValue(row: ProviderCostSummary) {
     return `${Math.round(row.total_tracking_amount || 0).toLocaleString()} items`;
   return `${row.request_count.toLocaleString()} runs`;
 }
+
+// URL holds UTC ISO; datetime-local inputs need local "YYYY-MM-DDTHH:mm".
+export function toLocalInput(iso: string) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// datetime-local emits naive local time; convert to UTC ISO so the
+// backend filter window matches what the admin sees in their browser.
+export function toUtcIso(local: string) {
+  if (!local) return "";
+  const d = new Date(local);
+  return isNaN(d.getTime()) ? "" : d.toISOString();
+}

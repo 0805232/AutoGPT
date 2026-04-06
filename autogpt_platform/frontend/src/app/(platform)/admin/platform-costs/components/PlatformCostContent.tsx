@@ -106,10 +106,31 @@ function PlatformCostContent({ searchParams }: Props) {
         >
           Apply
         </button>
+        <button
+          onClick={() => {
+            setStartInput("");
+            setEndInput("");
+            setProviderInput("");
+            setUserInput("");
+            updateUrl({
+              start: "",
+              end: "",
+              provider: "",
+              user_id: "",
+              page: "1",
+            });
+          }}
+          className="rounded border px-4 py-1.5 text-sm hover:bg-muted"
+        >
+          Clear
+        </button>
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700">
+        <div
+          role="alert"
+          className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/20 dark:text-red-400"
+        >
           {error}
         </div>
       )}

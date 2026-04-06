@@ -121,8 +121,9 @@ describe("PlatformCostContent", () => {
     mockGetLogs.mockResolvedValue(emptyLogs);
     renderComponent();
     await waitFor(() => expect(screen.queryByText("Loading...")).toBeNull());
-    expect(screen.getAllByText("$0.0000").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("0").length).toBeGreaterThanOrEqual(1);
+    // Verify the two summary cards that show $0.0000 — Known Cost and Estimated Total
+    const zeroCostItems = screen.getAllByText("$0.0000");
+    expect(zeroCostItems.length).toBe(2);
     expect(screen.getByText("No cost data yet")).toBeDefined();
   });
 
@@ -251,6 +252,25 @@ describe("PlatformCostContent", () => {
     renderComponent({ tab: "by-user" });
     await waitFor(() => expect(screen.queryByText("Loading...")).toBeNull());
     expect(screen.getByText("Unknown")).toBeDefined();
+  });
+
+  it("by-user tab content visible when tab=by-user param set", async () => {
+    mockGetDashboard.mockResolvedValue(dashboardWithData);
+    mockGetLogs.mockResolvedValue(logsWithData);
+    renderComponent({ tab: "by-user" });
+    await waitFor(() => expect(screen.queryByText("Loading...")).toBeNull());
+    expect(screen.getByText("alice@example.com")).toBeDefined();
+    // overview tab content should not be visible
+    expect(screen.queryByText("openai")).toBeNull();
+  });
+
+  it("logs tab content visible when tab=logs param set", async () => {
+    mockGetDashboard.mockResolvedValue(dashboardWithData);
+    mockGetLogs.mockResolvedValue(logsWithData);
+    renderComponent({ tab: "logs" });
+    await waitFor(() => expect(screen.queryByText("Loading...")).toBeNull());
+    expect(screen.getByText("LLMBlock")).toBeDefined();
+    expect(screen.getByText("gpt-4")).toBeDefined();
   });
 
   it("renders log with null user as dash", async () => {
