@@ -61,7 +61,11 @@ async def drain_pending_cost_logs(timeout: float = 5.0) -> None:
     the process exits. Tasks that don't complete within `timeout` seconds are
     abandoned and their failures are already logged by _safe_log.
     """
-    all_pending = list(_pending_log_tasks)
+    # asyncio.wait() requires all tasks to belong to the running event loop.
+    # _pending_log_tasks is shared across executor worker threads (each with
+    # its own loop), so filter to only tasks owned by the current loop.
+    current_loop = asyncio.get_running_loop()
+    all_pending = [t for t in _pending_log_tasks if t.get_loop() is current_loop]
     if all_pending:
         logger.info("Draining %d executor cost log task(s)", len(all_pending))
         _, still_pending = await asyncio.wait(all_pending, timeout=timeout)
@@ -76,7 +80,7 @@ async def drain_pending_cost_logs(timeout: float = 5.0) -> None:
         _pending_log_tasks as _copilot_tasks,
     )
 
-    copilot_pending = list(_copilot_tasks)
+    copilot_pending = [t for t in _copilot_tasks if t.get_loop() is current_loop]
     if copilot_pending:
         logger.info("Draining %d copilot cost log task(s)", len(copilot_pending))
         _, still_pending = await asyncio.wait(copilot_pending, timeout=timeout)
