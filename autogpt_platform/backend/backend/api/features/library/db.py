@@ -487,6 +487,11 @@ async def create_library_agent(
                             "topIntegrations": SafeJson(
                                 library_model._compute_top_integrations(graph_entry)
                             ),
+                            **(
+                                {"Folder": {"connect": {"id": folder_id}}}
+                                if folder_id and graph_entry is graph
+                                else {}
+                            ),
                         },
                     },
                     include=library_agent_include(
