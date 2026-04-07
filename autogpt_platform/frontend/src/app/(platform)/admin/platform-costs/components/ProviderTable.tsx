@@ -21,13 +21,29 @@ function ProviderTable({ data, rateOverrides, onRateOverride }: Props) {
       <table className="w-full text-left text-sm">
         <thead className="border-b text-xs uppercase text-muted-foreground">
           <tr>
-            <th className="px-4 py-3">Provider</th>
-            <th className="px-4 py-3">Type</th>
-            <th className="px-4 py-3 text-right">Usage</th>
-            <th className="px-4 py-3 text-right">Requests</th>
-            <th className="px-4 py-3 text-right">Known Cost</th>
-            <th className="px-4 py-3 text-right">Est. Cost</th>
-            <th className="px-4 py-3 text-right" title="Per-session only">
+            <th scope="col" className="px-4 py-3">
+              Provider
+            </th>
+            <th scope="col" className="px-4 py-3">
+              Type
+            </th>
+            <th scope="col" className="px-4 py-3 text-right">
+              Usage
+            </th>
+            <th scope="col" className="px-4 py-3 text-right">
+              Requests
+            </th>
+            <th scope="col" className="px-4 py-3 text-right">
+              Known Cost
+            </th>
+            <th scope="col" className="px-4 py-3 text-right">
+              Est. Cost
+            </th>
+            <th
+              scope="col"
+              className="px-4 py-3 text-right"
+              title="Per-session only"
+            >
               Rate <span className="text-[10px] font-normal">(unsaved)</span>
             </th>
           </tr>

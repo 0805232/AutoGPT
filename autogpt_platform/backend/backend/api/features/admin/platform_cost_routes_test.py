@@ -168,3 +168,25 @@ def test_get_dashboard_invalid_date_format() -> None:
     """Malformed start date must be rejected with 422."""
     response = client.get("/platform-costs/dashboard", params={"start": "not-a-date"})
     assert response.status_code == 422
+
+
+def test_get_dashboard_cache_hit(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Second identical request returns cached result without calling the DB again."""
+    real_dashboard = PlatformCostDashboard(
+        by_provider=[],
+        by_user=[],
+        total_cost_microdollars=42,
+        total_requests=1,
+        total_users=1,
+    )
+    mock_fn = mocker.patch(
+        "backend.api.features.admin.platform_cost_routes.get_platform_cost_dashboard",
+        AsyncMock(return_value=real_dashboard),
+    )
+
+    client.get("/platform-costs/dashboard")
+    client.get("/platform-costs/dashboard")
+
+    mock_fn.assert_awaited_once()  # second request hit the cache

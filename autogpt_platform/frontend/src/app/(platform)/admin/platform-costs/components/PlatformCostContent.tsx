@@ -48,7 +48,7 @@ function PlatformCostContent({ searchParams }: Props) {
       <div className="flex flex-wrap items-end gap-3 rounded-lg border p-4">
         <div className="flex flex-col gap-1">
           <label htmlFor="start-date" className="text-sm text-muted-foreground">
-            Start Date
+            Start Date <span className="text-xs">(local time)</span>
           </label>
           <input
             id="start-date"
@@ -60,7 +60,7 @@ function PlatformCostContent({ searchParams }: Props) {
         </div>
         <div className="flex flex-col gap-1">
           <label htmlFor="end-date" className="text-sm text-muted-foreground">
-            End Date
+            End Date <span className="text-xs">(local time)</span>
           </label>
           <input
             id="end-date"

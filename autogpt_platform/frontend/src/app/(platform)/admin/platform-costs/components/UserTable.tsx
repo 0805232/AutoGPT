@@ -11,11 +11,21 @@ function UserTable({ data }: Props) {
       <table className="w-full text-left text-sm">
         <thead className="border-b text-xs uppercase text-muted-foreground">
           <tr>
-            <th className="px-4 py-3">User</th>
-            <th className="px-4 py-3 text-right">Known Cost</th>
-            <th className="px-4 py-3 text-right">Requests</th>
-            <th className="px-4 py-3 text-right">Input Tokens</th>
-            <th className="px-4 py-3 text-right">Output Tokens</th>
+            <th scope="col" className="px-4 py-3">
+              User
+            </th>
+            <th scope="col" className="px-4 py-3 text-right">
+              Known Cost
+            </th>
+            <th scope="col" className="px-4 py-3 text-right">
+              Requests
+            </th>
+            <th scope="col" className="px-4 py-3 text-right">
+              Input Tokens
+            </th>
+            <th scope="col" className="px-4 py-3 text-right">
+              Output Tokens
+            </th>
           </tr>
         </thead>
         <tbody>

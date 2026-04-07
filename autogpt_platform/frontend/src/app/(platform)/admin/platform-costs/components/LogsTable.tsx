@@ -23,16 +23,36 @@ function LogsTable({ logs, pagination, onPageChange }: Props) {
         <table className="w-full text-left text-sm">
           <thead className="border-b text-xs uppercase text-muted-foreground">
             <tr>
-              <th className="px-3 py-3">Time</th>
-              <th className="px-3 py-3">User</th>
-              <th className="px-3 py-3">Block</th>
-              <th className="px-3 py-3">Provider</th>
-              <th className="px-3 py-3">Type</th>
-              <th className="px-3 py-3">Model</th>
-              <th className="px-3 py-3 text-right">Cost</th>
-              <th className="px-3 py-3 text-right">Tokens</th>
-              <th className="px-3 py-3 text-right">Duration</th>
-              <th className="px-3 py-3">Session</th>
+              <th scope="col" className="px-3 py-3">
+                Time
+              </th>
+              <th scope="col" className="px-3 py-3">
+                User
+              </th>
+              <th scope="col" className="px-3 py-3">
+                Block
+              </th>
+              <th scope="col" className="px-3 py-3">
+                Provider
+              </th>
+              <th scope="col" className="px-3 py-3">
+                Type
+              </th>
+              <th scope="col" className="px-3 py-3">
+                Model
+              </th>
+              <th scope="col" className="px-3 py-3 text-right">
+                Cost
+              </th>
+              <th scope="col" className="px-3 py-3 text-right">
+                Tokens
+              </th>
+              <th scope="col" className="px-3 py-3 text-right">
+                Duration
+              </th>
+              <th scope="col" className="px-3 py-3">
+                Session
+              </th>
             </tr>
           </thead>
           <tbody>

@@ -34,6 +34,8 @@ _WALLTIME_BILLED_PROVIDERS = frozenset(
 # Hold strong references to in-flight log tasks so the event loop doesn't
 # garbage-collect them mid-execution. Tasks remove themselves on completion.
 _pending_log_tasks: set[asyncio.Task] = set()
+# Bound concurrent DB inserts to avoid unbounded queue growth under load.
+_log_semaphore = asyncio.Semaphore(50)
 
 
 async def drain_pending_cost_logs(timeout: float = 5.0) -> None:
@@ -79,26 +81,27 @@ def _schedule_log(
     db_client: "DatabaseManagerAsyncClient", entry: PlatformCostEntry
 ) -> None:
     async def _safe_log() -> None:
-        try:
-            await db_client.log_platform_cost(entry)
-        except Exception:
-            logger.exception(
-                "Failed to log platform cost for user=%s provider=%s block=%s",
-                entry.user_id,
-                entry.provider,
-                entry.block_name,
-            )
+        async with _log_semaphore:
+            try:
+                await db_client.log_platform_cost(entry)
+            except Exception:
+                logger.exception(
+                    "Failed to log platform cost for user=%s provider=%s block=%s",
+                    entry.user_id,
+                    entry.provider,
+                    entry.block_name,
+                )
 
     task = asyncio.create_task(_safe_log())
     _pending_log_tasks.add(task)
     task.add_done_callback(_pending_log_tasks.discard)
 
 
-def _extract_model_name(raw: Any) -> str | None:
+def _extract_model_name(raw: str | dict | None) -> str | None:
     """Return a string model name from a block input field, or None.
 
     Handles str (returned as-is), dict (e.g. an enum wrapper, skipped), and
-    any other type (coerced to str as a best-effort fallback).
+    None (no model field). Unexpected types are coerced to str as a fallback.
     """
     if raw is None:
         return None
