@@ -1256,7 +1256,7 @@ async def stream_chat_completion_baseline(
             completion_tokens=state.turn_completion_tokens,
             log_prefix="[Baseline]",
             cost_usd=state.cost_usd,
-            model=config.model,
+            model=active_model,
         )
 
         # Persist structured tool-call history (assistant + tool messages)
