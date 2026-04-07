@@ -10,6 +10,7 @@ import prisma.models
 from pydantic import BaseModel, ConfigDict
 
 from backend.blocks.llm import ModelMetadata
+from backend.util.cache import cached
 
 logger = logging.getLogger(__name__)
 
@@ -65,18 +66,17 @@ class RegistryModel(BaseModel):
     supports_parallel_tool_calls: bool = False
 
 
-# In-memory cache (will be replaced with Redis in PR #6)
+# L1 in-process cache — Redis is the shared L2 via @cached(shared_cache=True)
 _dynamic_models: dict[str, RegistryModel] = {}
 _schema_options: list[dict[str, str]] = []
 _lock = asyncio.Lock()
 
 
-def _record_to_registry_model(record: prisma.models.LlmModel) -> RegistryModel:
+def _record_to_registry_model(record: prisma.models.LlmModel) -> RegistryModel:  # type: ignore[name-defined]
     """Transform a raw Prisma LlmModel record into a RegistryModel instance."""
-    # Parse costs
     costs = tuple(
         RegistryModelCost(
-            unit=str(cost.unit),  # Convert enum to string
+            unit=str(cost.unit),
             credit_cost=cost.creditCost,
             credential_provider=cost.credentialProvider,
             credential_id=cost.credentialId,
@@ -87,7 +87,6 @@ def _record_to_registry_model(record: prisma.models.LlmModel) -> RegistryModel:
         for cost in (record.Costs or [])
     )
 
-    # Parse creator
     creator = None
     if record.Creator:
         creator = RegistryModelCreator(
@@ -99,35 +98,26 @@ def _record_to_registry_model(record: prisma.models.LlmModel) -> RegistryModel:
             logo_url=record.Creator.logoUrl,
         )
 
-    # Parse capabilities
     capabilities = dict(record.capabilities or {})
 
-    # Build metadata from record
-    # Warn if Provider relation is missing (indicates data corruption)
     if not record.Provider:
         logger.warning(
-            f"LlmModel {record.slug} has no Provider despite NOT NULL FK - "
-            f"falling back to providerId {record.providerId}"
+            "LlmModel %s has no Provider despite NOT NULL FK - "
+            "falling back to providerId %s",
+            record.slug,
+            record.providerId,
         )
-    provider_name = (
-        record.Provider.name if record.Provider else record.providerId
-    )
+    provider_name = record.Provider.name if record.Provider else record.providerId
     provider_display = (
-        record.Provider.displayName
-        if record.Provider
-        else record.providerId
+        record.Provider.displayName if record.Provider else record.providerId
     )
+    creator_name = record.Creator.displayName if record.Creator else "Unknown"
 
-    # Extract creator name (fallback to "Unknown" if no creator)
-    creator_name = (
-        record.Creator.displayName if record.Creator else "Unknown"
-    )
-
-    # Price tier defaults to 1 if not set
     if record.priceTier not in (1, 2, 3):
         logger.warning(
-            f"LlmModel {record.slug} has out-of-range priceTier={record.priceTier}, "
-            "defaulting to 1"
+            "LlmModel %s has out-of-range priceTier=%s, defaulting to 1",
+            record.slug,
+            record.priceTier,
         )
     price_tier = record.priceTier if record.priceTier in (1, 2, 3) else 1
 
@@ -164,41 +154,53 @@ def _record_to_registry_model(record: prisma.models.LlmModel) -> RegistryModel:
     )
 
 
-async def refresh_llm_registry() -> None:
-    """
-    Refresh the LLM registry from the database.
+@cached(maxsize=1, ttl_seconds=300, shared_cache=True, refresh_ttl_on_get=True)
+async def _fetch_registry_from_db() -> list[RegistryModel]:
+    """Fetch all LLM models from the database.
 
-    Fetches all models with their costs, providers, and creators,
-    then updates the in-memory cache.
+    Results are cached in Redis (shared_cache=True) so subsequent calls within
+    the TTL window skip the DB entirely — both within this process and across
+    all other workers that share the same Redis instance.
+    """
+    records = await prisma.models.LlmModel.prisma().find_many(  # type: ignore[attr-defined]
+        include={"Provider": True, "Costs": True, "Creator": True}
+    )
+    logger.info("Fetched %d LLM models from database", len(records))
+    return [_record_to_registry_model(r) for r in records]
+
+
+def clear_registry_cache() -> None:
+    """Invalidate the shared Redis cache for the registry DB fetch.
+
+    Call this before refresh_llm_registry() after any admin DB mutation so the
+    next fetch hits the database rather than serving the now-stale cached data.
+    """
+    _fetch_registry_from_db.cache_clear()
+
+
+async def refresh_llm_registry() -> None:
+    """Refresh the in-process L1 cache from Redis/DB.
+
+    On the first call (or after clear_registry_cache()), fetches fresh data
+    from the database and stores it in Redis.  Subsequent calls by other
+    workers hit the Redis cache instead of the DB.
     """
     async with _lock:
         try:
-            records = await prisma.models.LlmModel.prisma().find_many(
-                include={
-                    "Provider": True,
-                    "Costs": True,
-                    "Creator": True,
-                }
-            )
-            logger.info(f"Fetched {len(records)} LLM models from database")
+            models = await _fetch_registry_from_db()
+            new_models = {m.slug: m for m in models}
 
-            # Build model instances
-            new_models: dict[str, RegistryModel] = {}
-            for record in records:
-                model = _record_to_registry_model(record)
-                new_models[record.slug] = model
-
-            # Atomic swap
             global _dynamic_models, _schema_options
             _dynamic_models = new_models
             _schema_options = _build_schema_options()
 
             logger.info(
-                f"LLM registry refreshed: {len(_dynamic_models)} models, "
-                f"{len(_schema_options)} schema options"
+                "LLM registry refreshed: %d models, %d schema options",
+                len(_dynamic_models),
+                len(_schema_options),
             )
         except Exception as e:
-            logger.error(f"Failed to refresh LLM registry: {e}", exc_info=True)
+            logger.error("Failed to refresh LLM registry: %s", e, exc_info=True)
             raise
 
 
@@ -240,23 +242,13 @@ def get_schema_options() -> list[dict[str, str]]:
 
 def get_default_model_slug() -> str | None:
     """Get the default model slug (first recommended, or first enabled)."""
-    # Sort once and use next() to short-circuit on first match
     models = sorted(_dynamic_models.values(), key=lambda m: m.display_name)
-
-    # Prefer recommended models
     recommended = next(
         (m.slug for m in models if m.is_recommended and m.is_enabled), None
     )
-    if recommended:
-        return recommended
-
-    # Fallback to first enabled model
-    return next((m.slug for m in models if m.is_enabled), None)
+    return recommended or next((m.slug for m in models if m.is_enabled), None)
 
 
 def get_all_model_slugs_for_validation() -> list[str]:
-    """
-    Get all model slugs for validation (enables migrate_llm_models to work).
-    Returns slugs for enabled models only.
-    """
+    """Get all model slugs for validation (enabled models only)."""
     return [model.slug for model in _dynamic_models.values() if model.is_enabled]

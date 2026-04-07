@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import logging
 import platform
@@ -118,17 +119,25 @@ async def lifespan_context(app: fastapi.FastAPI):
 
     AutoRegistry.patch_integrations()
 
-    # Refresh LLM registry before initializing blocks so blocks can use registry data
+    # Load LLM registry before initializing blocks so blocks can use registry data.
+    # Tries Redis first (fast path on warm restart), falls back to DB.
     # Note: Graceful fallback for now since no blocks consume registry yet (comes in PR #5)
-    # When block integration lands, this should fail hard or skip block initialization
     try:
         await backend.data.llm_registry.refresh_llm_registry()
-        logger.info("LLM registry refreshed successfully at startup")
+        logger.info("LLM registry loaded successfully at startup")
     except Exception as e:
         logger.warning(
-            f"Failed to refresh LLM registry at startup: {e}. "
+            f"Failed to load LLM registry at startup: {e}. "
             "Blocks will initialize with empty registry."
         )
+
+    # Start background task so this worker reloads its in-process cache whenever
+    # another worker (e.g. the admin API) refreshes the registry.
+    _registry_subscription_task = asyncio.create_task(
+        backend.data.llm_registry.subscribe_to_registry_refresh(
+            backend.data.llm_registry.refresh_llm_registry
+        )
+    )
 
     await backend.data.block.initialize_blocks()
 
@@ -153,6 +162,12 @@ async def lifespan_context(app: fastapi.FastAPI):
 
     with launch_darkly_context():
         yield
+
+    _registry_subscription_task.cancel()
+    try:
+        await _registry_subscription_task
+    except asyncio.CancelledError:
+        pass
 
     try:
         await shutdown_cloud_storage_handler()
