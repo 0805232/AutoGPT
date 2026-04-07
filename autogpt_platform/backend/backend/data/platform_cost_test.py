@@ -184,7 +184,7 @@ class TestGetPlatformCostDashboard:
         assert dashboard.by_provider[0].tracking_type == "tokens"
         assert dashboard.by_provider[0].total_duration_seconds == 10.5
         assert len(dashboard.by_user) == 1
-        assert dashboard.by_user[0].email == "a@b.com"
+        assert dashboard.by_user[0].email == "a***@b.com"
 
     @pytest.mark.asyncio
     async def test_returns_empty_dashboard(self):
