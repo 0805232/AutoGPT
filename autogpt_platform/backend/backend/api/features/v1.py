@@ -438,7 +438,10 @@ async def get_graph_blocks() -> Response:
     dependencies=[Security(requires_user)],
 )
 async def execute_graph_block(
-    block_id: str, data: BlockInput, user_id: Annotated[str, Security(get_user_id)]
+    block_id: str,
+    data: BlockInput,
+    user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> CompletedBlockOutput:
     obj = get_block(block_id)
     if not obj:
@@ -484,6 +487,7 @@ async def execute_graph_block(
 )
 async def upload_file(
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
     file: UploadFile = File(...),
     expiration_hours: int = 24,
 ) -> UploadFileResponse:
@@ -573,6 +577,7 @@ async def upload_file(
 )
 async def get_user_credits(
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> dict[str, int]:
     user_credit_model = await get_user_credit_model(user_id)
     return {"credits": await user_credit_model.get_credits(user_id)}
@@ -585,7 +590,9 @@ async def get_user_credits(
     dependencies=[Security(requires_user)],
 )
 async def request_top_up(
-    request: RequestTopUp, user_id: Annotated[str, Security(get_user_id)]
+    request: RequestTopUp,
+    user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ):
     user_credit_model = await get_user_credit_model(user_id)
     checkout_url = await user_credit_model.top_up_intent(user_id, request.credit_amount)
@@ -740,6 +747,7 @@ async def manage_payment_method(
 )
 async def get_credit_history(
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
     transaction_time: datetime | None = None,
     transaction_type: str | None = None,
     transaction_count_limit: int = 100,
@@ -764,6 +772,7 @@ async def get_credit_history(
 )
 async def get_refund_requests(
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> list[RefundRequest]:
     user_credit_model = await get_user_credit_model(user_id)
     return await user_credit_model.get_refund_requests(user_id)
@@ -786,6 +795,7 @@ class DeleteGraphResponse(TypedDict):
 )
 async def list_graphs(
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> Sequence[graph_db.GraphMeta]:
     paginated_result = await graph_db.list_graphs_paginated(
         user_id=user_id,
@@ -811,6 +821,7 @@ async def list_graphs(
 async def get_graph(
     graph_id: str,
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
     version: int | None = None,
     for_export: bool = False,
 ) -> graph_db.GraphModel:
@@ -833,7 +844,9 @@ async def get_graph(
     dependencies=[Security(requires_user)],
 )
 async def get_graph_all_versions(
-    graph_id: str, user_id: Annotated[str, Security(get_user_id)]
+    graph_id: str,
+    user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> Sequence[graph_db.GraphModel]:
     graphs = await graph_db.get_graph_all_versions(graph_id, user_id=user_id)
     if not graphs:
@@ -878,7 +891,9 @@ async def create_new_graph(
     dependencies=[Security(requires_user)],
 )
 async def delete_graph(
-    graph_id: str, user_id: Annotated[str, Security(get_user_id)]
+    graph_id: str,
+    user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> DeleteGraphResponse:
     if active_version := await graph_db.get_graph(
         graph_id=graph_id, version=None, user_id=user_id
@@ -952,6 +967,7 @@ async def set_graph_active_version(
     graph_id: str,
     request_body: SetGraphActiveVersion,
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ):
     new_active_version = request_body.active_graph_version
     new_active_graph = await graph_db.get_graph(
@@ -995,6 +1011,7 @@ async def update_graph_settings(
     graph_id: str,
     settings: GraphSettings,
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> GraphSettings:
     """Update graph settings for the user's library agent."""
     library_agent = await library_db.get_library_agent_by_graph_id(
@@ -1136,6 +1153,7 @@ async def _stop_graph_run(
 )
 async def list_graphs_executions(
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> list[execution_db.GraphExecutionMeta]:
     paginated_result = await execution_db.get_graph_executions_paginated(
         user_id=user_id,
@@ -1159,6 +1177,7 @@ async def list_graphs_executions(
 async def list_graph_executions(
     graph_id: str,
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(
         25, ge=1, le=100, description="Number of executions per page"
@@ -1216,6 +1235,7 @@ async def get_graph_execution(
     graph_id: str,
     graph_exec_id: str,
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> execution_db.GraphExecution | execution_db.GraphExecutionWithNodes:
     result = await execution_db.get_graph_execution(
         user_id=user_id,
@@ -1273,6 +1293,7 @@ async def hide_activity_summary_if_disabled(
 async def delete_graph_execution(
     graph_exec_id: str,
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> None:
     await execution_db.delete_graph_execution(
         graph_exec_id=graph_exec_id, user_id=user_id
@@ -1300,6 +1321,7 @@ async def enable_execution_sharing(
     graph_id: Annotated[str, Path],
     graph_exec_id: Annotated[str, Path],
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
     _body: ShareRequest = Body(default=ShareRequest()),
 ) -> ShareResponse:
     """Enable sharing for a graph execution."""
@@ -1338,6 +1360,7 @@ async def disable_execution_sharing(
     graph_id: Annotated[str, Path],
     graph_exec_id: Annotated[str, Path],
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> None:
     """Disable sharing for a graph execution."""
     # Verify the execution belongs to the user
@@ -1451,6 +1474,7 @@ async def create_graph_execution_schedule(
 )
 async def list_graph_execution_schedules(
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
     graph_id: str = Path(),
 ) -> list[scheduler.GraphExecutionJobInfo]:
     return await get_scheduler_client().get_execution_schedules(
@@ -1467,6 +1491,7 @@ async def list_graph_execution_schedules(
 )
 async def list_all_graphs_execution_schedules(
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> list[scheduler.GraphExecutionJobInfo]:
     return await get_scheduler_client().get_execution_schedules(user_id=user_id)
 
@@ -1479,6 +1504,7 @@ async def list_all_graphs_execution_schedules(
 )
 async def delete_graph_execution_schedule(
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
     schedule_id: str = Path(..., description="ID of the schedule to delete"),
 ) -> dict[str, Any]:
     try:
@@ -1526,6 +1552,7 @@ async def create_api_key(
 )
 async def get_api_keys(
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> list[api_key_db.APIKeyInfo]:
     """List all API keys for the user"""
     return await api_key_db.list_user_api_keys(user_id)
@@ -1538,7 +1565,9 @@ async def get_api_keys(
     dependencies=[Security(requires_user)],
 )
 async def get_api_key(
-    key_id: str, user_id: Annotated[str, Security(get_user_id)]
+    key_id: str,
+    user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> api_key_db.APIKeyInfo:
     """Get a specific API key"""
     api_key = await api_key_db.get_api_key_by_id(key_id, user_id)
@@ -1554,7 +1583,9 @@ async def get_api_key(
     dependencies=[Security(requires_user)],
 )
 async def delete_api_key(
-    key_id: str, user_id: Annotated[str, Security(get_user_id)]
+    key_id: str,
+    user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> api_key_db.APIKeyInfo:
     """Revoke an API key"""
     return await api_key_db.revoke_api_key(key_id, user_id)
@@ -1567,7 +1598,9 @@ async def delete_api_key(
     dependencies=[Security(requires_user)],
 )
 async def suspend_key(
-    key_id: str, user_id: Annotated[str, Security(get_user_id)]
+    key_id: str,
+    user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> api_key_db.APIKeyInfo:
     """Suspend an API key"""
     return await api_key_db.suspend_api_key(key_id, user_id)
@@ -1583,6 +1616,7 @@ async def update_permissions(
     key_id: str,
     request: UpdatePermissionsRequest,
     user_id: Annotated[str, Security(get_user_id)],
+    ctx: Annotated[RequestContext, Security(get_request_context)],
 ) -> api_key_db.APIKeyInfo:
     """Update API key permissions"""
     return await api_key_db.update_api_key_permissions(
