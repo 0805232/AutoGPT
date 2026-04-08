@@ -1,24 +1,23 @@
 /**
- * CoPilot Bot — Multi-platform bot using Vercel Chat SDK.
+ * CoPilot Bot — Core logic using Vercel Chat SDK.
  *
- * Handles:
- * - Account linking (prompts unlinked users to link)
- * - Message routing to CoPilot API
- * - Streaming responses back to the user
+ * Server-level ownership model:
+ * - The first person to authenticate a server becomes its "owner".
+ * - All users in the server get their own CoPilot sessions, all billed
+ *   to the owner's AutoGPT account and visible in their platform account.
+ * - If a server is not linked, the triggering user is DM'd a setup link.
  */
 
-import { Chat, Message } from "chat";
-import type { Adapter, StateAdapter, Thread } from "chat";
-import { PlatformAPI } from "./platform-api.js";
+import { Chat } from "chat";
+import type { Adapter, StateAdapter, Thread, Message } from "chat";
+import { PlatformAPI, PlatformAPIError } from "./platform-api.js";
 import type { Config } from "./config.js";
 
-// Thread state persisted across messages
+/** Thread state persisted across messages in a conversation. */
 export interface BotThreadState {
-  /** Linked AutoGPT user ID */
-  userId?: string;
-  /** CoPilot chat session ID for this thread */
+  /** CoPilot session ID for this specific user×server conversation. */
   sessionId?: string;
-  /** Pending link token (if user hasn't linked yet) */
+  /** Pending setup token (sent while waiting for owner to link). */
   pendingLinkToken?: string;
 }
 
@@ -27,7 +26,6 @@ type BotThread = Thread<BotThreadState>;
 export async function createBot(config: Config, stateAdapter: StateAdapter) {
   const api = new PlatformAPI(config.autogptApiUrl);
 
-  // Build adapters based on config
   const adapters: Record<string, Adapter> = {};
 
   if (config.discord) {
@@ -47,8 +45,8 @@ export async function createBot(config: Config, stateAdapter: StateAdapter) {
 
   if (Object.keys(adapters).length === 0) {
     throw new Error(
-      "No adapters enabled. Set at least one of: " +
-        "DISCORD_BOT_TOKEN, TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN"
+      "No adapters configured. Set at least one of: " +
+        "DISCORD_BOT_TOKEN, TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN",
     );
   }
 
@@ -56,118 +54,131 @@ export async function createBot(config: Config, stateAdapter: StateAdapter) {
     userName: "copilot",
     adapters,
     state: stateAdapter,
-    streamingUpdateIntervalMs: 500,
-    fallbackStreamingPlaceholderText: "Thinking...",
   });
 
-  // ── New mention (first message in a thread) ──────────────────────
+  // ── New mention (first message in a thread) ──────────────────────────
 
   bot.onNewMention(async (thread, message) => {
-    const adapterName = getAdapterName(thread);
+    const platform = getPlatformName(thread.id);
+    const serverId = getServerId(thread.id);
     const platformUserId = message.author.userId;
 
     console.log(
-      `[bot] New mention from ${adapterName}:${platformUserId} in ${thread.id}`
+      `[bot] Mention in ${platform} server ${serverId} from user ${platformUserId}`,
     );
 
-    // Check if user is linked
-    const resolved = await api.resolve(adapterName, platformUserId);
+    if (isHelpCommand(message.text)) {
+      await thread.post(helpText());
+      return;
+    }
+
+    const resolved = await api.resolve(platform, serverId);
 
     if (!resolved.linked) {
-      await handleUnlinkedUser(thread, message, adapterName, api);
+      await handleUnlinkedServer(thread, message, platform, serverId, api);
       return;
     }
 
-    // User is linked — subscribe and handle the message
     await thread.subscribe();
-    await thread.setState({ userId: resolved.user_id });
-
-    await handleCoPilotMessage(thread, message.text, resolved.user_id!, api);
+    await handleCoPilotMessage(
+      thread, message.text, platform, serverId, platformUserId, api,
+    );
   });
 
-  // ── Subscribed messages (follow-ups in a thread) ─────────────────
+  // ── Follow-up messages in a subscribed thread ────────────────────────
 
   bot.onSubscribedMessage(async (thread, message) => {
-    const state = await thread.state;
+    const platform = getPlatformName(thread.id);
+    const serverId = getServerId(thread.id);
+    const platformUserId = message.author.userId;
 
-    if (!state?.userId) {
-      // Somehow lost state — re-resolve
-      const adapterName = getAdapterName(thread);
-      const resolved = await api.resolve(adapterName, message.author.userId);
-
-      if (!resolved.linked) {
-        await handleUnlinkedUser(thread, message, adapterName, api);
-        return;
-      }
-
-      await thread.setState({ userId: resolved.user_id });
-      await handleCoPilotMessage(
-        thread,
-        message.text,
-        resolved.user_id!,
-        api
-      );
+    if (isHelpCommand(message.text)) {
+      await thread.post(helpText());
       return;
     }
 
-    await handleCoPilotMessage(thread, message.text, state.userId, api);
+    // Re-check linking in case the owner just completed setup
+    const resolved = await api.resolve(platform, serverId);
+
+    if (!resolved.linked) {
+      await handleUnlinkedServer(thread, message, platform, serverId, api);
+      return;
+    }
+
+    await handleCoPilotMessage(
+      thread, message.text, platform, serverId, platformUserId, api,
+    );
   });
 
   return bot;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Get the adapter/platform name from a thread.
- * Thread ID format is "adapter:channel:thread".
+ * Extract the adapter/platform name from a thread ID.
+ * Thread ID format: "adapter:channelOrServerId:threadId"
  */
-function getAdapterName(thread: BotThread): string {
-  const parts = thread.id.split(":");
-  return parts[0] ?? "unknown";
+function getPlatformName(threadId: string): string {
+  return threadId.split(":")[0] ?? "unknown";
 }
 
 /**
- * Handle an unlinked user — create a link token and send them a prompt.
+ * Extract the server/channel identifier from a thread ID.
+ * Used as platform_server_id for all API calls.
  */
-async function handleUnlinkedUser(
+function getServerId(threadId: string): string {
+  return threadId.split(":")[1] ?? threadId;
+}
+
+function isHelpCommand(text: string): boolean {
+  return text.trim().toLowerCase().startsWith("/help");
+}
+
+/**
+ * Handle a message in an unlinked server.
+ * DMs the triggering user a one-time setup link — never posts in the channel.
+ */
+async function handleUnlinkedServer(
   thread: BotThread,
   message: Message,
   platform: string,
-  api: PlatformAPI
+  serverId: string,
+  api: PlatformAPI,
 ) {
-  console.log(
-    `[bot] Unlinked user ${platform}:${message.author.userId}, sending link prompt`
-  );
+  console.log(`[bot] Server ${platform}:${serverId} not linked, sending setup DM`);
 
   try {
     const linkResult = await api.createLinkToken({
       platform,
+      platformServerId: serverId,
       platformUserId: message.author.userId,
       platformUsername: message.author.fullName ?? message.author.userName,
     });
 
-    await thread.post(
-      `👋 To use CoPilot, link your AutoGPT account first.\n\n` +
-        `🔗 **Link your account:** ${linkResult.link_url}\n\n` +
-        `_This link expires in 30 minutes._`
+    // DM the link — never post it publicly
+    await message.author.sendDM(
+      `👋 **Set up CoPilot for this server**\n\n` +
+        `Click below to connect your AutoGPT account. ` +
+        `Once done, everyone in the server can use CoPilot — ` +
+        `all usage will appear in your AutoGPT account.\n\n` +
+        `🔗 **Set up now:** ${linkResult.link_url}\n\n` +
+        `_This link expires in 30 minutes. Only you received this message._`,
     );
 
-    // Store the pending token so we could poll later if needed
+    await thread.post(
+      `👋 I've sent you a DM with a setup link! Once you've connected your AutoGPT account, everyone here can chat with CoPilot.`,
+    );
+
     await thread.setState({ pendingLinkToken: linkResult.token });
-  } catch (err: unknown) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    if (errMsg.includes("409")) {
-      // Already linked (race condition) — retry resolve
-      const resolved = await api.resolve(platform, message.author.userId);
+  } catch (err) {
+    if (err instanceof PlatformAPIError && err.status === 409) {
+      // Race condition: server was linked between resolve and createLinkToken
+      const resolved = await api.resolve(platform, serverId);
       if (resolved.linked) {
         await thread.subscribe();
-        await thread.setState({ userId: resolved.user_id });
         await handleCoPilotMessage(
-          thread,
-          message.text,
-          resolved.user_id!,
-          api
+          thread, message.text, platform, serverId, message.author.userId, api,
         );
         return;
       }
@@ -175,41 +186,41 @@ async function handleUnlinkedUser(
 
     console.error("[bot] Failed to create link token:", err);
     await thread.post(
-      "Sorry, I couldn't set up account linking right now. Please try again later."
+      "Sorry, I couldn't set up account linking right now. Please try again later.",
     );
   }
 }
 
 /**
- * Forward a message to CoPilot and stream the response back.
+ * Forward a message to CoPilot and post the response.
+ * Each (server, platform_user) pair gets its own session under the owner's account.
  */
 async function handleCoPilotMessage(
   thread: BotThread,
   text: string,
-  userId: string,
-  api: PlatformAPI
+  platform: string,
+  serverId: string,
+  platformUserId: string,
+  api: PlatformAPI,
 ) {
   const state = await thread.state;
   let sessionId = state?.sessionId;
 
-  console.log(
-    `[bot] Message from user ${userId.slice(-8)}: ${text.slice(0, 100)}`
-  );
-
   await thread.startTyping();
 
   try {
-    // Create a session if we don't have one
     if (!sessionId) {
-      sessionId = await api.createChatSession(userId);
+      sessionId = await api.createChatSession(platform, serverId, platformUserId);
       await thread.setState({ ...state, sessionId });
-      console.log(`[bot] Created session ${sessionId} for user ${userId.slice(-8)}`);
+      console.log(
+        `[bot] Created session ${sessionId} for ${platform}:${serverId}:${platformUserId}`,
+      );
     }
 
-    // Stream CoPilot response — collect chunks, then post.
-    // We collect first because thread.post() with an empty stream
-    // causes Discord "Cannot send an empty message" errors.
-    const stream = api.streamChat(userId, text, sessionId);
+    // Collect the full response before posting to avoid "empty message" errors
+    const stream = api.streamChat(
+      platform, serverId, platformUserId, text, sessionId,
+    );
     let response = "";
     for await (const chunk of stream) {
       response += chunk;
@@ -219,14 +230,30 @@ async function handleCoPilotMessage(
       await thread.post(response);
     } else {
       await thread.post(
-        "I processed your message but didn't generate a response. Please try again."
+        "I processed your message but didn't generate a response. Please try again.",
       );
     }
-  } catch (err: unknown) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    console.error(`[bot] CoPilot error for user ${userId.slice(-8)}:`, errMsg);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[bot] CoPilot error for ${platform}:${serverId}:${platformUserId}:`, msg,
+    );
     await thread.post(
-      "Sorry, I ran into an issue processing your message. Please try again."
+      "Sorry, I ran into an issue processing your message. Please try again.",
     );
   }
+}
+
+function helpText(): string {
+  return (
+    `**CoPilot Bot** — Your AutoGPT assistant\n\n` +
+    `**Getting started:**\n` +
+    `• The first person to mention me will receive a DM with a one-time setup link\n` +
+    `• Once set up, everyone in the server can chat with CoPilot\n` +
+    `• Each person gets their own private conversation\n` +
+    `• All conversations appear in the setup owner's AutoGPT account\n\n` +
+    `**Commands:**\n` +
+    `• \`/help\` — Show this message\n\n` +
+    `Powered by [AutoGPT](https://platform.agpt.co)`
+  );
 }

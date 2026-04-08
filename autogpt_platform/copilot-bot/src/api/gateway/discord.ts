@@ -1,15 +1,22 @@
 /**
  * Discord Gateway cron endpoint.
+ * Vercel route: GET /api/gateway/discord
  *
- * In serverless environments, Discord's Gateway WebSocket needs a
- * persistent connection to receive messages. This endpoint is called
- * by a cron job every 9 minutes to maintain the connection.
+ * Discord's Gateway WebSocket requires a persistent connection to receive
+ * regular messages. In serverless, this endpoint is called by a cron job
+ * every 9 minutes (see vercel.json). It connects, listens for up to 9 minutes,
+ * then returns — the next cron invocation picks up immediately.
+ *
+ * waitUntil is passed so background tasks started by the listener are
+ * kept alive until the function returns.
  */
 
 import { getBotInstance } from "../_bot.js";
 
-export async function GET(request: Request) {
-  // Verify cron secret in production
+export const maxDuration = 800; // Vercel max for Pro plan
+
+export async function GET(request: Request): Promise<Response> {
+  // Verify cron secret to prevent unauthorized gateway connections
   const authHeader = request.headers.get("authorization");
   if (
     process.env.CRON_SECRET &&
@@ -21,19 +28,15 @@ export async function GET(request: Request) {
   const bot = await getBotInstance();
   await bot.initialize();
 
-  const discord = bot.getAdapter("discord");
+  const discord = bot.adapters.discord;
   if (!discord) {
     return new Response("Discord adapter not configured", { status: 404 });
   }
 
   const baseUrl = process.env.WEBHOOK_BASE_URL ?? "http://localhost:3000";
   const webhookUrl = `${baseUrl}/api/webhooks/discord`;
-  const durationMs = 9 * 60 * 1000; // 9 minutes (matches cron interval)
+  const durationMs = 9 * 60 * 1000; // 9 minutes — matches cron schedule
 
-  return (discord as any).startGatewayListener(
-    {},
-    durationMs,
-    undefined,
-    webhookUrl
-  );
+  // Pass the request context so background tasks stay alive
+  return discord.startGatewayListener(request, durationMs, undefined, webhookUrl);
 }

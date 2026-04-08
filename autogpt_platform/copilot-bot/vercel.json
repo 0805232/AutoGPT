@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/gateway/discord",
+      "schedule": "*/9 * * * *"
+    }
+  ]
+}

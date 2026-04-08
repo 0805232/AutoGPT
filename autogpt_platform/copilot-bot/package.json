@@ -16,8 +16,7 @@
     "@chat-adapter/slack": "^4.23.0",
     "@chat-adapter/state-memory": "^4.23.0",
     "@chat-adapter/state-redis": "^4.23.0",
-    "dotenv": "^16.4.0",
-    "eventsource-parser": "^3.0.1"
+    "dotenv": "^16.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

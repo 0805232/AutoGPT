@@ -1,17 +1,14 @@
 /**
- * Discord webhook endpoint.
- * Deploy as: POST /api/webhooks/discord
+ * Discord webhook handler.
+ * Vercel route: POST /api/webhooks/discord
+ *
+ * Handles Discord HTTP interactions (slash commands, button clicks, pings).
+ * Regular messages arrive via the Gateway cron (api/gateway/discord.ts).
  */
 
 import { getBotInstance } from "../_bot.js";
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
   const bot = await getBotInstance();
-  const handler = bot.webhooks.discord;
-
-  if (!handler) {
-    return new Response("Discord adapter not configured", { status: 404 });
-  }
-
-  return handler(request);
+  return bot.webhooks.discord(request);
 }
