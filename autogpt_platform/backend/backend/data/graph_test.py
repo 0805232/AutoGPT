@@ -13,7 +13,7 @@ from backend.api.model import CreateGraph
 from backend.blocks._base import BlockSchema, BlockSchemaInput
 from backend.blocks.basic import StoreValueBlock
 from backend.blocks.io import AgentInputBlock, AgentOutputBlock
-from backend.data.graph import Graph, Link, Node, get_graph
+from backend.data.graph import Graph, GraphModel, Link, Node, get_graph
 from backend.data.model import SchemaField
 from backend.data.user import DEFAULT_USER_ID
 from backend.usecases.sample import create_test_user
@@ -674,3 +674,21 @@ async def test_get_graph_non_owner_pending_marketplace_agent_denied() -> None:
         )
 
     assert result is None, "Non-owner must not access a pending marketplace agent"
+
+
+# ============================================================================
+# Tests for _generate_schema AttributeError → ValueError conversion
+# ============================================================================
+
+
+def test_generate_schema_raises_value_error_when_name_missing():
+    """AgentInputBlock.Input constructed without 'name' should raise ValueError.
+
+    model_construct() skips validation, so the Input object is created without
+    a 'name' attribute.  The dict comprehension in _generate_schema then hits an
+    AttributeError when it accesses p.name.  That AttributeError must be caught
+    and re-raised as ValueError so the existing 400 handler in rest_api.py fires
+    instead of falling through to the 500 catch-all.
+    """
+    with pytest.raises(ValueError):
+        GraphModel._generate_schema((AgentInputBlock.Input, {}))
