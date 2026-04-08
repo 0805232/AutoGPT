@@ -12100,6 +12100,7 @@
           "agent_builder_clarification_needed",
           "agent_builder_validation_result",
           "agent_builder_fix_result",
+          "task_decomposition",
           "block_list",
           "block_details",
           "block_output",
