@@ -151,9 +151,8 @@ class CoPilotProcessor:
         This method is called once per worker thread to set up the async event
         loop and initialize any required resources.
 
-        Prisma is connected here because copilot/db.py and rate_limit.py use
-        the Prisma singleton directly for ChatSession, ChatMessage, and User
-        queries on this worker's event loop.
+        DB operations route through DatabaseManagerAsyncClient (RPC) via the
+        db_accessors pattern — no direct Prisma connection is needed here.
         """
         configure_logging()
         set_service_name("CoPilotExecutor")
@@ -163,14 +162,6 @@ class CoPilotProcessor:
             target=self.execution_loop.run_forever, daemon=True
         )
         self.execution_thread.start()
-
-        # Connect Prisma for copilot/db.py and rate_limit.py which use
-        # the Prisma singleton directly on this worker's event loop.
-        from backend.data import db as db_module
-
-        asyncio.run_coroutine_threadsafe(
-            db_module.connect(), self.execution_loop
-        ).result(timeout=30)
 
         # Skip the SDK's per-request CLI version check — the bundled CLI is
         # already version-matched to the SDK package.

@@ -104,6 +104,11 @@ class User(BaseModel):
         description="User timezone (IANA timezone identifier or 'not-set')",
     )
 
+    # Subscription / rate-limit tier
+    subscription_tier: str | None = Field(
+        default=None, description="Subscription tier (FREE, PRO, BUSINESS, ENTERPRISE)"
+    )
+
     @classmethod
     def from_db(cls, prisma_user: "PrismaUser") -> "User":
         """Convert a database User object to application User model."""
@@ -158,6 +163,7 @@ class User(BaseModel):
             notify_on_weekly_summary=prisma_user.notifyOnWeeklySummary or True,
             notify_on_monthly_summary=prisma_user.notifyOnMonthlySummary or True,
             timezone=prisma_user.timezone or USER_TIMEZONE_NOT_SET,
+            subscription_tier=prisma_user.subscriptionTier,
         )
 
 
