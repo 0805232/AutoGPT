@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from backend.data.graph import BaseGraph
 from backend.data.model import CredentialsMetaInput
@@ -719,7 +719,12 @@ class TaskDecompositionResponse(ToolResponseBase):
     type: ResponseType = ResponseType.TASK_DECOMPOSITION
     goal: str = Field(description="The original user goal")
     steps: list[DecompositionStepModel]
-    step_count: int
+    step_count: int = Field(
+        default=0, description="Number of steps (auto-derived from steps list)"
+    )
     requires_approval: bool = True
 
-
+    @model_validator(mode="after")
+    def sync_step_count(self) -> "TaskDecompositionResponse":
+        self.step_count = len(self.steps)
+        return self

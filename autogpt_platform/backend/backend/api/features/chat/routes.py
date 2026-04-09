@@ -64,6 +64,7 @@ from backend.copilot.tools.models import (
     NoResultsResponse,
     SetupRequirementsResponse,
     SuggestedGoalResponse,
+    TaskDecompositionResponse,
     UnderstandingUpdatedResponse,
 )
 from backend.copilot.tracking import track_user_message
@@ -1264,6 +1265,7 @@ ToolResponseUnion = (
     | DocPageResponse
     | MCPToolsDiscoveredResponse
     | MCPToolOutputResponse
+    | TaskDecompositionResponse
 )
 
 

@@ -17,6 +17,7 @@ import {
 } from "../../components/ToolAccordion/AccordionContent";
 import { ToolAccordion } from "../../components/ToolAccordion/ToolAccordion";
 import { ToolErrorCard } from "../../components/ToolErrorCard/ToolErrorCard";
+import { useCopilotUIStore } from "../../store";
 import { StepItem } from "./components/StepItem";
 import {
   AccordionIcon,
@@ -47,6 +48,7 @@ interface Props {
 export function DecomposeGoalTool({ part, isLastMessage }: Props) {
   const text = getAnimationText(part);
   const { onSend } = useCopilotChatActions();
+  const { setInitialPrompt } = useCopilotUIStore();
 
   const isStreaming =
     part.state === "input-streaming" || part.state === "input-available";
@@ -54,7 +56,7 @@ export function DecomposeGoalTool({ part, isLastMessage }: Props) {
   const output = getDecomposeGoalOutput(part);
   const isError =
     part.state === "output-error" || (!!output && isErrorOutput(output));
-  const isOperating = !output;
+  const isPending = !output;
 
   const showActions =
     !!isLastMessage &&
@@ -94,10 +96,12 @@ export function DecomposeGoalTool({ part, isLastMessage }: Props) {
   }
 
   function handleModify() {
+    if (approvedRef.current) return;
     if (!output || !isDecompositionOutput(output)) return;
     setTimerActive(false);
     setIsEditing(true);
     setEditableSteps(output.steps.map((s) => ({ ...s })));
+    setInitialPrompt("I'd like to modify the plan. Here are my changes: ");
   }
 
   function handleStepChange(index: number, description: string) {
@@ -134,11 +138,13 @@ export function DecomposeGoalTool({ part, isLastMessage }: Props) {
   }, [showActions, timerActive, part.toolCallId]);
 
   // Auto-approve when countdown reaches 0 (only if timer is still active).
+  // approve() is stable via approvedRef — timerActive is captured in the condition
+  // so the effect re-runs whenever timerActive changes, preventing stale closure issues.
   useEffect(() => {
-    if (secondsLeft === 0 && timerActive) approve();
-    // approve is stable via ref — intentionally omitted
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [secondsLeft, timerActive]);
+    if (secondsLeft === 0 && timerActive) {
+      approve();
+    }
+  }, [secondsLeft, timerActive]); // approve reads refs only — safe to omit
 
   const progress = secondsLeft / COUNTDOWN_SECONDS;
   const dashOffset = CIRCUMFERENCE * (1 - progress);
@@ -150,7 +156,7 @@ export function DecomposeGoalTool({ part, isLastMessage }: Props) {
 
   return (
     <div className="py-2">
-      {isOperating && (
+      {isPending && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <ToolIcon isStreaming={isStreaming} isError={isError} />
           <MorphingTextAnimation
@@ -160,9 +166,11 @@ export function DecomposeGoalTool({ part, isLastMessage }: Props) {
         </div>
       )}
 
-      {isError && output && isErrorOutput(output) && (
+      {isError && (
         <ToolErrorCard
-          message={output.message ?? ""}
+          message={
+            output && isErrorOutput(output) ? (output.message ?? "") : ""
+          }
           fallbackMessage="Failed to analyze the goal. Please try again."
           actions={[
             {
@@ -183,7 +191,7 @@ export function DecomposeGoalTool({ part, isLastMessage }: Props) {
           <ContentGrid>
             <ContentMessage>{output.message}</ContentMessage>
 
-            <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="rounded-lg border border-border bg-card p-3">
               {isEditing ? (
                 <div className="flex flex-col">
                   {/* Insert before the first step */}
@@ -192,7 +200,7 @@ export function DecomposeGoalTool({ part, isLastMessage }: Props) {
                   {editableSteps.map((step, i) => (
                     <div key={step.step_id} className="flex flex-col">
                       <div className="flex items-start gap-2 py-1">
-                        <span className="w-5 shrink-0 pt-1 text-xs text-slate-400">
+                        <span className="w-5 shrink-0 pt-1 text-xs text-muted-foreground">
                           {i + 1}.
                         </span>
                         <textarea
@@ -205,13 +213,13 @@ export function DecomposeGoalTool({ part, isLastMessage }: Props) {
                           value={step.description}
                           onChange={(e) => handleStepChange(i, e.target.value)}
                           rows={1}
-                          className="flex-1 resize-none overflow-hidden rounded border border-slate-200 px-2 py-1 text-sm focus:border-neutral-400 focus:outline-none"
+                          className="flex-1 resize-none overflow-hidden rounded border border-border px-2 py-1 text-sm focus:border-neutral-400 focus:outline-none"
                           placeholder="Step description"
                         />
                         <button
                           type="button"
                           onClick={() => handleStepDelete(i)}
-                          className="mt-1 text-slate-400 hover:text-red-500"
+                          className="mt-1 text-muted-foreground hover:text-red-500"
                           aria-label="Remove step"
                         >
                           <TrashIcon size={14} />
@@ -229,7 +237,6 @@ export function DecomposeGoalTool({ part, isLastMessage }: Props) {
                       key={step.step_id}
                       index={i}
                       description={step.description}
-                      action={step.action}
                       blockName={step.block_name}
                       status={step.status}
                     />
@@ -283,7 +290,7 @@ export function DecomposeGoalTool({ part, isLastMessage }: Props) {
                                 className="text-neutral-600 transition-[stroke-dashoffset] duration-1000 ease-linear"
                               />
                             </svg>
-                            <span className="relative z-10 text-[11px] font-semibold tabular-nums text-neutral-700">
+                            <span className="relative z-10 text-[11px] font-semibold tabular-nums text-foreground">
                               {secondsLeft}
                             </span>
                           </span>
@@ -305,6 +312,12 @@ export function DecomposeGoalTool({ part, isLastMessage }: Props) {
                 )}
               </div>
             )}
+
+            {output.requires_approval && !showActions && (
+              <ContentMessage>
+                Review the plan above and approve to start building.
+              </ContentMessage>
+            )}
           </ContentGrid>
         </ToolAccordion>
       )}
@@ -315,16 +328,16 @@ export function DecomposeGoalTool({ part, isLastMessage }: Props) {
 function InsertButton({ onClick }: { onClick: () => void }) {
   return (
     <div className="group flex items-center gap-1 py-0.5">
-      <div className="h-px flex-1 bg-slate-100 group-hover:bg-neutral-300" />
+      <div className="h-px flex-1 bg-border group-hover:bg-neutral-300" />
       <button
         type="button"
         onClick={onClick}
-        className="flex items-center gap-0.5 rounded px-1 text-xs text-slate-300 hover:text-neutral-700 focus:outline-none"
+        className="flex items-center gap-0.5 rounded px-1 text-xs text-muted-foreground hover:text-foreground focus:outline-none"
         aria-label="Insert step here"
       >
         <PlusIcon size={10} weight="bold" />
       </button>
-      <div className="h-px flex-1 bg-slate-100 group-hover:bg-neutral-300" />
+      <div className="h-px flex-1 bg-border group-hover:bg-neutral-300" />
     </div>
   );
 }

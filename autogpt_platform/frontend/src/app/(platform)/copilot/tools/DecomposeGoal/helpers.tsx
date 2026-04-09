@@ -49,12 +49,22 @@ function parseOutput(output: unknown): DecomposeGoalOutput | null {
       return null;
     }
   }
-  if (typeof output === "object") {
-    if ("steps" in output && "goal" in output) {
-      return output as TaskDecompositionOutput;
+  if (typeof output === "object" && !Array.isArray(output)) {
+    const obj = output as Record<string, unknown>;
+    if (
+      "steps" in obj &&
+      "goal" in obj &&
+      Array.isArray(obj.steps) &&
+      typeof obj.goal === "string"
+    ) {
+      return obj as unknown as TaskDecompositionOutput;
     }
-    if ("error" in output) {
-      return output as DecomposeErrorOutput;
+    if ("error" in obj && typeof obj.error === "string") {
+      return obj as unknown as DecomposeErrorOutput;
+    }
+    // Message-only error payload (no 'error' key but also not a decomposition)
+    if ("message" in obj && typeof obj.message === "string") {
+      return obj as unknown as DecomposeErrorOutput;
     }
   }
   return null;
@@ -70,7 +80,11 @@ export function getDecomposeGoalOutput(
 export function isDecompositionOutput(
   output: DecomposeGoalOutput,
 ): output is TaskDecompositionOutput {
-  return "steps" in output && "goal" in output;
+  return (
+    "steps" in output &&
+    Array.isArray((output as TaskDecompositionOutput).steps) &&
+    "goal" in output
+  );
 }
 
 export function isErrorOutput(
@@ -128,7 +142,12 @@ export function StepStatusIcon({ status }: { status: string }) {
   switch (status) {
     case "completed":
       return (
-        <CheckCircleIcon size={18} weight="fill" className="text-emerald-500" />
+        <CheckCircleIcon
+          size={18}
+          weight="fill"
+          className="text-emerald-500"
+          aria-label="completed"
+        />
       );
     case "in_progress":
       return (
@@ -136,16 +155,25 @@ export function StepStatusIcon({ status }: { status: string }) {
           size={18}
           weight="bold"
           className="animate-spin text-blue-500"
+          aria-label="in progress"
         />
       );
     case "failed":
-      return <XCircleIcon size={18} weight="fill" className="text-red-500" />;
+      return (
+        <XCircleIcon
+          size={18}
+          weight="fill"
+          className="text-red-500"
+          aria-label="failed"
+        />
+      );
     default:
       return (
         <CircleDashedIcon
           size={18}
           weight="regular"
           className="text-neutral-400"
+          aria-label="pending"
         />
       );
   }

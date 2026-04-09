@@ -15,7 +15,10 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
-MAX_STEPS = 10
+# Matches the guide's "4-8 steps max" constraint.
+MAX_STEPS = 8
+DEFAULT_ACTION = "add_block"
+VALID_ACTIONS = {"add_block", "connect_blocks", "configure", "add_input", "add_output"}
 
 
 class DecomposeGoalTool(BaseTool):
@@ -58,6 +61,7 @@ class DecomposeGoalTool(BaseTool):
                                     "Action type: 'add_block', 'connect_blocks', "
                                     "'configure', 'add_input', 'add_output'."
                                 ),
+                                "enum": list(VALID_ACTIONS),
                             },
                             "block_name": {
                                 "type": "string",
@@ -68,11 +72,6 @@ class DecomposeGoalTool(BaseTool):
                     },
                     "description": "List of sub-instructions for the plan.",
                 },
-                "require_approval": {
-                    "type": "boolean",
-                    "description": "Whether to ask user for approval (default: true).",
-                    "default": True,
-                },
             },
             "required": ["goal", "steps"],
         }
@@ -82,8 +81,7 @@ class DecomposeGoalTool(BaseTool):
         user_id: str | None,
         session: ChatSession,
         goal: str | None = None,
-        steps: list[dict[str, Any]] | None = None,
-        require_approval: bool = True,
+        steps: list[Any] | None = None,
         **kwargs,
     ) -> ToolResponseBase:
         session_id = session.session_id if session else None
@@ -109,22 +107,39 @@ class DecomposeGoalTool(BaseTool):
                 session_id=session_id,
             )
 
-        decomposition_steps = [
-            DecompositionStepModel(
-                step_id=f"step_{i + 1}",
-                description=step.get("description", ""),
-                action=step.get("action", "add_block"),
-                block_name=step.get("block_name"),
-                status="pending",
+        decomposition_steps: list[DecompositionStepModel] = []
+        for i, step in enumerate(steps):
+            if not isinstance(step, dict):
+                return ErrorResponse(
+                    message=f"Step {i + 1} is malformed — expected an object.",
+                    error="invalid_step",
+                    session_id=session_id,
+                )
+            description = step.get("description", "")
+            if not description or not description.strip():
+                return ErrorResponse(
+                    message=f"Step {i + 1} is missing a description.",
+                    error="empty_description",
+                    session_id=session_id,
+                )
+            action = step.get("action", DEFAULT_ACTION)
+            if action not in VALID_ACTIONS:
+                action = DEFAULT_ACTION
+            decomposition_steps.append(
+                DecompositionStepModel(
+                    step_id=f"step_{i + 1}",
+                    description=description,
+                    action=action,
+                    block_name=step.get("block_name"),
+                    status="pending",
+                )
             )
-            for i, step in enumerate(steps)
-        ]
 
         return TaskDecompositionResponse(
             message=f"Here's the plan to build your agent ({len(decomposition_steps)} steps):",
             goal=goal,
             steps=decomposition_steps,
             step_count=len(decomposition_steps),
-            requires_approval=require_approval,
+            requires_approval=True,
             session_id=session_id,
         )
