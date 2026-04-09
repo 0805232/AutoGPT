@@ -94,6 +94,7 @@ interface Props {
   messageID: string;
   partIndex: number;
   onRetry?: () => void;
+  isLastMessage?: boolean;
 }
 
 export function MessagePartRenderer({
@@ -101,6 +102,7 @@ export function MessagePartRenderer({
   messageID,
   partIndex,
   onRetry,
+  isLastMessage,
 }: Props) {
   const key = `${messageID}-${partIndex}`;
 
@@ -169,7 +171,13 @@ export function MessagePartRenderer({
     case "tool-schedule_agent":
       return <RunAgentTool key={key} part={part as ToolUIPart} />;
     case "tool-decompose_goal":
-      return <DecomposeGoalTool key={key} part={part as ToolUIPart} />;
+      return (
+        <DecomposeGoalTool
+          key={key}
+          part={part as ToolUIPart}
+          isLastMessage={isLastMessage}
+        />
+      );
     case "tool-create_agent":
       return <CreateAgentTool key={key} part={part as ToolUIPart} />;
     case "tool-edit_agent":
