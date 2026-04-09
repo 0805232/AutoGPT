@@ -150,16 +150,9 @@ export function splitReasoningAndResponse(parts: MessagePart[]): {
     }
   }
 
-  const hasDecomposeGoal = pinnedParts.some(
-    (p) => p.type === "tool-decompose_goal",
-  );
-  const filteredResponse = hasDecomposeGoal
-    ? rawResponse.filter((p) => p.type !== "text")
-    : rawResponse;
-
   return {
     reasoning,
-    response: [...pinnedParts, ...filteredResponse],
+    response: [...pinnedParts, ...rawResponse],
   };
 }
 
