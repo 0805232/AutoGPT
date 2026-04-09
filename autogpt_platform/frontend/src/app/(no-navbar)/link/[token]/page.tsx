@@ -5,7 +5,7 @@ import { AuthCard } from "@/components/auth/AuthCard";
 import { Text } from "@/components/atoms/Text/Text";
 import { useSupabase } from "@/lib/supabase/hooks/useSupabase";
 import { CheckCircle, LinkBreak, Spinner } from "@phosphor-icons/react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 const PLATFORM_NAMES: Record<string, string> = {
@@ -28,7 +28,11 @@ type LinkState =
 
 export default function PlatformLinkPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const token = params.token as string;
+  // Platform is passed as ?platform=DISCORD/TELEGRAM/etc. in the link URL
+  const platformFromUrl =
+    PLATFORM_NAMES[searchParams.get("platform")?.toUpperCase() ?? ""] ?? null;
   const { user, isUserLoading, logOut } = useSupabase();
 
   const [state, setState] = useState<LinkState>({ status: "loading" });
@@ -41,10 +45,9 @@ export default function PlatformLinkPage() {
       return;
     }
 
-    void fetchTokenInfo(token).then(({ serverName, platform }) => {
-      setState({ status: "ready", serverName, platform });
-    });
-  }, [token, user, isUserLoading]);
+    // Platform comes from the URL query param — no separate API call needed
+    setState({ status: "ready", serverName: null, platform: platformFromUrl });
+  }, [token, user, isUserLoading, platformFromUrl]);
 
   async function handleLink() {
     const serverName = state.status === "ready" ? state.serverName : null;
@@ -130,26 +133,6 @@ export default function PlatformLinkPage() {
   );
 }
 
-async function fetchTokenInfo(
-  token: string,
-): Promise<{ serverName: string | null; platform: string | null }> {
-  try {
-    const res = await fetch(
-      `/api/proxy/api/platform-linking/tokens/${token}/info`,
-      { signal: AbortSignal.timeout(5_000) },
-    );
-    if (!res.ok) return { serverName: null, platform: null };
-    const data = await res.json();
-    return {
-      serverName: (data.server_name as string | null) ?? null,
-      platform:
-        PLATFORM_NAMES[(data.platform as string | undefined) ?? ""] ?? null,
-    };
-  } catch {
-    return { serverName: null, platform: null };
-  }
-}
-
 function LoadingView() {
   return (
     <AuthCard title="Setting up CoPilot">
@@ -200,7 +183,8 @@ function ReadyView({
   platform: string | null;
   userEmail: string | null;
 }) {
-  const platformLabel = platform ?? "your chat platform";
+  // platformLabel is just the name ("Telegram", "Discord") — no "your" prefix
+  const platformLabel = platform ?? "chat platform";
   const isPersonal = !serverName;
   const title = isPersonal
     ? `Link your ${platformLabel} account`
