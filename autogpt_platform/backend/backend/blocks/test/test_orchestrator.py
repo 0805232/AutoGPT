@@ -922,6 +922,10 @@ async def test_orchestrator_agent_mode():
         mock_execution_processor.on_node_execution = AsyncMock(
             return_value=mock_node_stats
         )
+        # Mock charge_node_usage (called after successful tool execution).
+        # Returns (cost, remaining_balance). Synchronous because it's called
+        # via asyncio.to_thread.
+        mock_execution_processor.charge_node_usage = MagicMock(return_value=(0, 0))
 
         # Mock the get_execution_outputs_by_node_exec_id method
         mock_db_client.get_execution_outputs_by_node_exec_id.return_value = {

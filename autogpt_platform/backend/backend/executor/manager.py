@@ -683,6 +683,11 @@ class ExecutionProcessor:
         # billing (e.g. OrchestratorBlock in agent mode). The first call
         # is already covered by _charge_usage(); each additional LLM call
         # costs another base_cost. Skipped for dry runs and failed runs.
+        #
+        # InsufficientBalanceError is logged at ERROR level (this is a
+        # billing leak — the work is already done, but the user can't pay)
+        # and re-surfaced via execution_stats.error so monitoring can pick
+        # it up. Other exceptions are warnings.
         if (
             status == ExecutionStatus.COMPLETED
             and node.block.charge_per_llm_call
@@ -691,16 +696,27 @@ class ExecutionProcessor:
         ):
             extra_iterations = execution_stats.llm_call_count - 1
             try:
-                extra_cost = await asyncio.to_thread(
+                extra_cost, remaining_balance = await asyncio.to_thread(
                     self.charge_extra_iterations,
                     node_exec,
                     extra_iterations,
                 )
                 if extra_cost > 0:
                     execution_stats.extra_cost += extra_cost
+                    self._handle_low_balance(
+                        db_client=get_db_client(),
+                        user_id=node_exec.user_id,
+                        current_balance=remaining_balance,
+                        transaction_cost=extra_cost,
+                    )
+            except InsufficientBalanceError as e:
+                log_metadata.error(
+                    f"Billing leak: insufficient balance after {node.block.name} "
+                    f"completed {extra_iterations} extra iterations: {e}"
+                )
             except Exception as e:
                 log_metadata.warning(
-                    f"Failed to charge extra iterations for " f"{node.block.name}: {e}"
+                    f"Failed to charge extra iterations for {node.block.name}: {e}"
                 )
 
         graph_stats, graph_stats_lock = graph_stats_pair
@@ -1018,6 +1034,12 @@ class ExecutionProcessor:
 
         return total_cost, remaining_balance
 
+    # Hard cap on the multiplier passed to charge_extra_iterations to
+    # protect against a corrupted llm_call_count draining a user's balance.
+    # Real agent-mode runs are bounded by agent_mode_max_iterations (~50);
+    # 200 leaves headroom while preventing runaway charges.
+    _MAX_EXTRA_ITERATIONS = 200
+
     def charge_node_usage(
         self,
         node_exec: NodeExecutionEntry,
@@ -1027,17 +1049,22 @@ class ExecutionProcessor:
         Public wrapper around :meth:`_charge_usage` for blocks (e.g. the
         OrchestratorBlock) that spawn nested node executions outside the
         main queue and therefore need to charge them explicitly.
+
+        Note: this **does not** increment the global execution counter
+        (``increment_execution_count``). Nested tool executions are
+        sub-steps of a single block run from the user's perspective and
+        should not push them into higher per-execution cost tiers.
         """
         return self._charge_usage(
             node_exec=node_exec,
-            execution_count=increment_execution_count(node_exec.user_id),
+            execution_count=0,
         )
 
     def charge_extra_iterations(
         self,
         node_exec: NodeExecutionEntry,
         extra_iterations: int,
-    ) -> int:
+    ) -> tuple[int, int]:
         """Charge a block extra iterations beyond the initial run.
 
         Used by agent-mode blocks (e.g. OrchestratorBlock) that make
@@ -1045,20 +1072,25 @@ class ExecutionProcessor:
         iteration is already charged by :meth:`_charge_usage`; this
         method charges *extra_iterations* additional copies of the
         block's base cost.
+
+        Returns ``(total_extra_cost, remaining_balance)``. May raise
+        ``InsufficientBalanceError`` if the user can't afford the charge.
         """
         if extra_iterations <= 0:
-            return 0
+            return 0, 0
+        # Cap to protect against a corrupted llm_call_count.
+        capped_iterations = min(extra_iterations, self._MAX_EXTRA_ITERATIONS)
         db_client = get_db_client()
         block = get_block(node_exec.block_id)
         if not block:
-            return 0
+            return 0, 0
         cost, matching_filter = block_usage_cost(
             block=block, input_data=node_exec.inputs
         )
         if cost <= 0:
-            return 0
-        total_extra_cost = cost * extra_iterations
-        db_client.spend_credits(
+            return 0, 0
+        total_extra_cost = cost * capped_iterations
+        remaining_balance = db_client.spend_credits(
             user_id=node_exec.user_id,
             cost=total_extra_cost,
             metadata=UsageTransactionMetadata(
@@ -1070,15 +1102,15 @@ class ExecutionProcessor:
                 block=block.name,
                 input={
                     **matching_filter,
-                    "extra_iterations": extra_iterations,
+                    "extra_iterations": capped_iterations,
                 },
                 reason=(
                     f"Extra agent-mode iterations for {block.name} "
-                    f"({extra_iterations} additional LLM calls)"
+                    f"({capped_iterations} additional LLM calls)"
                 ),
             ),
         )
-        return total_extra_cost
+        return total_extra_cost, remaining_balance
 
     @time_measured
     def _on_graph_execution(

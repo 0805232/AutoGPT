@@ -956,6 +956,8 @@ async def test_agent_mode_conversation_valid_for_responses_api():
     ep.execution_stats_lock = threading.Lock()
     ns = MagicMock(error=None)
     ep.on_node_execution = AsyncMock(return_value=ns)
+    # Mock charge_node_usage (called after successful tool execution).
+    ep.charge_node_usage = MagicMock(return_value=(0, 0))
 
     with patch("backend.blocks.llm.llm_call", llm_mock), patch.object(
         block, "_create_tool_node_signatures", return_value=tool_sigs

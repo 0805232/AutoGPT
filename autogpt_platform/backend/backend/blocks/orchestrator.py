@@ -36,6 +36,7 @@ from backend.data.execution import ExecutionContext
 from backend.data.model import NodeExecutionStats, SchemaField
 from backend.util import json
 from backend.util.clients import get_database_manager_async_client
+from backend.util.exceptions import InsufficientBalanceError
 from backend.util.prompt import MAIN_OBJECTIVE_PREFIX
 from backend.util.security import SENSITIVE_FIELD_NAMES
 from backend.util.tool_call_loop import (
@@ -1107,18 +1108,6 @@ class OrchestratorBlock(Block):
                 execution_processor.execution_stats_lock,
             )
 
-            # Charge user credits for the tool execution. Tools spawned by the
-            # orchestrator bypass the main execution queue (where _charge_usage
-            # is called), so we must charge here to avoid free tool execution.
-            # Skipped for dry runs and when block has no cost configured.
-            if not execution_params.execution_context.dry_run:
-                tool_cost, _ = await asyncio.to_thread(
-                    execution_processor.charge_node_usage,
-                    node_exec_entry,
-                )
-                if tool_cost > 0:
-                    self.merge_stats(NodeExecutionStats(extra_cost=tool_cost))
-
             # Create a completed future for the task tracking system
             node_exec_future = Future()
             node_exec_progress.add_task(
@@ -1127,14 +1116,31 @@ class OrchestratorBlock(Block):
             )
 
             # Execute the node directly since we're in the Orchestrator context
-            node_exec_future.set_result(
-                await execution_processor.on_node_execution(
-                    node_exec=node_exec_entry,
-                    node_exec_progress=node_exec_progress,
-                    nodes_input_masks=None,
-                    graph_stats_pair=graph_stats_pair,
-                )
+            tool_node_stats = await execution_processor.on_node_execution(
+                node_exec=node_exec_entry,
+                node_exec_progress=node_exec_progress,
+                nodes_input_masks=None,
+                graph_stats_pair=graph_stats_pair,
             )
+            node_exec_future.set_result(tool_node_stats)
+
+            # Charge user credits AFTER successful tool execution. Tools
+            # spawned by the orchestrator bypass the main execution queue
+            # (where _charge_usage is called), so we must charge here to
+            # avoid free tool execution. Charging post-completion (vs.
+            # pre-execution) avoids billing users for failed tool calls.
+            # Skipped for dry runs.
+            if (
+                not execution_params.execution_context.dry_run
+                and tool_node_stats is not None
+                and not isinstance(tool_node_stats.error, Exception)
+            ):
+                tool_cost, _ = await asyncio.to_thread(
+                    execution_processor.charge_node_usage,
+                    node_exec_entry,
+                )
+                if tool_cost > 0:
+                    self.merge_stats(NodeExecutionStats(extra_cost=tool_cost))
 
             # Get outputs from database after execution completes using database manager client
             node_outputs = await db_client.get_execution_outputs_by_node_exec_id(
@@ -1151,6 +1157,12 @@ class OrchestratorBlock(Block):
                 tool_call.id, tool_response_content, responses_api=responses_api
             )
 
+        except InsufficientBalanceError:
+            # Don't downgrade billing failures into tool errors — let the
+            # orchestrator's outer error handling stop the run cleanly,
+            # mirroring the behaviour of the main execution queue. Also
+            # prevents leaking exact balance amounts to the LLM context.
+            raise
         except Exception as e:
             logger.warning("Tool execution with manager failed: %s", e)
             # Return error response

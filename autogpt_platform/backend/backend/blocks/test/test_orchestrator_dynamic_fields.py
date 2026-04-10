@@ -638,6 +638,10 @@ async def test_validation_errors_dont_pollute_conversation():
                 mock_execution_processor.on_node_execution.return_value = (
                     mock_node_stats
                 )
+                # Mock charge_node_usage (called after successful tool execution).
+                mock_execution_processor.charge_node_usage = MagicMock(
+                    return_value=(0, 0)
+                )
 
                 async for output_name, output_value in block.run(
                     input_data,
