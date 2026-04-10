@@ -548,5 +548,6 @@ class DatabaseManagerAsyncClient(AppServiceClient):
     delete_chat_session = d.delete_chat_session
     get_next_sequence = d.get_next_sequence
     update_tool_message_content = d.update_tool_message_content
+    update_message_content_by_sequence = d.update_message_content_by_sequence
     update_chat_session_title = d.update_chat_session_title
     set_turn_duration = d.set_turn_duration
