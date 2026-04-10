@@ -1930,7 +1930,7 @@ async def list_trigger_agents(
                                 prisma.types.JsonFilter,
                                 {
                                     "path": ["graph_id"],
-                                    "equals": parent.graph_id,
+                                    "equals": prisma.Json(parent.graph_id),
                                 },
                             ),
                         }
