@@ -1,21 +1,21 @@
-"""Unified MCP Write tool that works in both E2B and non-E2B modes.
+"""Unified MCP file tools (Read/Write/Edit) for both E2B and non-E2B modes.
 
-Replaces the CLI's built-in Write tool, which has no defence against output-token
-truncation.  When the LLM generates a very large ``content`` argument the API
+Replaces the CLI's built-in Write and Edit tools, which have no defence against
+output-token truncation.  When the LLM generates a very large argument the API
 truncates the response mid-JSON and Ajv rejects it with the opaque
 "'file_path' is a required property" error, losing the user's work.
 
-This MCP tool:
-- Detects partial truncation (content present but file_path missing)
+Each MCP tool:
+- Detects partial truncation (arguments present but file_path missing)
 - Detects complete truncation (empty args)
-- Warns on large content that succeeded (>50K chars)
-- In non-E2B mode: writes to the SDK working directory
-- In E2B mode: delegates to the E2B sandbox write handler
+- In non-E2B mode: operates on the SDK working directory
+- In E2B mode: delegates to the E2B sandbox handler
 
-The JSON schema places ``file_path`` FIRST so that truncation is more likely
+The JSON schemas place ``file_path`` FIRST so that truncation is more likely
 to preserve the path (the API serialises properties in schema order).
 """
 
+import itertools
 import json
 import logging
 import os
@@ -65,6 +65,27 @@ def _check_truncation(file_path: str, content: str) -> dict[str, Any] | None:
     return None
 
 
+def _resolve_and_validate(
+    file_path: str, sdk_cwd: str
+) -> tuple[str, None] | tuple[None, dict[str, Any]]:
+    """Resolve *file_path* against *sdk_cwd* and validate it stays within bounds.
+
+    Returns ``(resolved_path, None)`` on success, or ``(None, error_response)``
+    on failure.
+    """
+    if not os.path.isabs(file_path):
+        resolved = os.path.normpath(os.path.join(sdk_cwd, file_path))
+    else:
+        resolved = os.path.normpath(file_path)
+
+    if not is_allowed_local_path(resolved, sdk_cwd):
+        return None, _mcp(
+            f"Path must be within the working directory: {os.path.basename(file_path)}",
+            error=True,
+        )
+    return resolved, None
+
+
 async def _handle_write_non_e2b(args: dict[str, Any]) -> dict[str, Any]:
     """Write content to a file in the SDK working directory (non-E2B mode)."""
     file_path: str = args.get("file_path", "")
@@ -78,18 +99,10 @@ async def _handle_write_non_e2b(args: dict[str, Any]) -> dict[str, Any]:
     if not sdk_cwd:
         return _mcp("No SDK working directory available", error=True)
 
-    # Resolve relative paths against SDK working directory
-    if not os.path.isabs(file_path):
-        resolved = os.path.normpath(os.path.join(sdk_cwd, file_path))
-    else:
-        resolved = os.path.normpath(file_path)
-
-    # Validate path stays within allowed directories
-    if not is_allowed_local_path(resolved, sdk_cwd):
-        return _mcp(
-            f"Path must be within the working directory: {os.path.basename(file_path)}",
-            error=True,
-        )
+    resolved, err = _resolve_and_validate(file_path, sdk_cwd)
+    if err is not None:
+        return err
+    assert resolved is not None  # for type narrowing
 
     try:
         parent = os.path.dirname(resolved)
@@ -159,4 +172,281 @@ WRITE_TOOL_SCHEMA: dict[str, Any] = {
         },
     },
     "required": ["file_path", "content"],
+}
+
+
+# ---------------------------------------------------------------------------
+# Unified Read tool
+# ---------------------------------------------------------------------------
+
+_READ_BINARY_EXTENSIONS = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".ico",
+        ".webp",
+        ".pdf",
+        ".zip",
+        ".gz",
+        ".tar",
+        ".bz2",
+        ".xz",
+        ".7z",
+        ".exe",
+        ".dll",
+        ".so",
+        ".dylib",
+        ".bin",
+        ".o",
+        ".a",
+        ".pyc",
+        ".pyo",
+        ".class",
+        ".wasm",
+        ".mp3",
+        ".mp4",
+        ".avi",
+        ".mov",
+        ".mkv",
+        ".wav",
+        ".flac",
+        ".sqlite",
+        ".db",
+    }
+)
+
+
+def _is_likely_binary(path: str) -> bool:
+    """Heuristic check for binary files by extension."""
+    _, ext = os.path.splitext(path)
+    return ext.lower() in _READ_BINARY_EXTENSIONS
+
+
+async def _handle_read_non_e2b(args: dict[str, Any]) -> dict[str, Any]:
+    """Read a file from the SDK working directory (non-E2B mode)."""
+    file_path: str = args.get("file_path", "")
+    offset: int = max(0, int(args.get("offset", 0)))
+    limit: int = max(1, int(args.get("limit", 2000)))
+
+    if not file_path:
+        return _mcp("file_path is required", error=True)
+
+    sdk_cwd = get_sdk_cwd()
+    if not sdk_cwd:
+        return _mcp("No SDK working directory available", error=True)
+
+    resolved, err = _resolve_and_validate(file_path, sdk_cwd)
+    if err is not None:
+        return err
+    assert resolved is not None
+
+    if _is_likely_binary(resolved):
+        return _mcp(
+            f"Cannot read binary file: {os.path.basename(resolved)}. "
+            "Use bash_exec with 'xxd' or 'file' to inspect binary files.",
+            error=True,
+        )
+
+    try:
+        with open(resolved, encoding="utf-8", errors="replace") as f:
+            selected = list(itertools.islice(f, offset, offset + limit))
+    except FileNotFoundError:
+        return _mcp(f"File not found: {file_path}", error=True)
+    except PermissionError:
+        return _mcp(f"Permission denied: {file_path}", error=True)
+    except Exception as exc:
+        return _mcp(f"Failed to read {file_path}: {exc}", error=True)
+
+    numbered = "".join(
+        f"{i + offset + 1:>6}\t{line}" for i, line in enumerate(selected)
+    )
+    return _mcp(numbered)
+
+
+async def _handle_read_e2b(args: dict[str, Any]) -> dict[str, Any]:
+    """Read a file, delegating to the E2B sandbox."""
+    from .e2b_file_tools import _handle_read_file
+
+    return await _handle_read_file(args)
+
+
+def get_read_tool_handler(*, use_e2b: bool) -> Callable[..., Any]:
+    """Return the appropriate Read handler for the current execution mode."""
+    if use_e2b:
+        return _handle_read_e2b
+    return _handle_read_non_e2b
+
+
+READ_TOOL_NAME = "read_file"
+READ_TOOL_DESCRIPTION = (
+    "Read a file from the working directory. Returns content with line numbers "
+    "(cat -n format). Use offset and limit to read specific ranges for large files."
+)
+READ_TOOL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "file_path": {
+            "type": "string",
+            "description": (
+                "The path to the file to read. "
+                "Relative paths are resolved against the working directory."
+            ),
+        },
+        "offset": {
+            "type": "integer",
+            "description": (
+                "Line number to start reading from (0-indexed). Default: 0."
+            ),
+        },
+        "limit": {
+            "type": "integer",
+            "description": "Number of lines to read. Default: 2000.",
+        },
+    },
+    "required": ["file_path"],
+}
+
+
+# ---------------------------------------------------------------------------
+# Unified Edit tool
+# ---------------------------------------------------------------------------
+
+_EDIT_PARTIAL_TRUNCATION_MSG = (
+    "Your Edit call was truncated (file_path missing but old_string/new_string "
+    "were present). The arguments were too large for a single tool call. "
+    "Break your edit into smaller replacements, or use bash_exec with "
+    "'sed' for large-scale find-and-replace."
+)
+
+
+async def _handle_edit_non_e2b(args: dict[str, Any]) -> dict[str, Any]:
+    """Edit a file in the SDK working directory (non-E2B mode)."""
+    file_path: str = args.get("file_path", "")
+    old_string: str = args.get("old_string", "")
+    new_string: str = args.get("new_string", "")
+    replace_all: bool = args.get("replace_all", False)
+
+    # Partial truncation: file_path missing but edit strings present
+    if not file_path:
+        if old_string or new_string:
+            return _mcp(_EDIT_PARTIAL_TRUNCATION_MSG, error=True)
+        return _mcp(
+            "Your Edit call had empty arguments — this means your previous "
+            "response was too long and the tool call was truncated by the API. "
+            "Break your work into smaller steps.",
+            error=True,
+        )
+
+    if not old_string:
+        return _mcp("old_string is required", error=True)
+
+    sdk_cwd = get_sdk_cwd()
+    if not sdk_cwd:
+        return _mcp("No SDK working directory available", error=True)
+
+    resolved, err = _resolve_and_validate(file_path, sdk_cwd)
+    if err is not None:
+        return err
+    assert resolved is not None
+
+    try:
+        with open(resolved, encoding="utf-8") as f:
+            content = f.read()
+    except FileNotFoundError:
+        return _mcp(f"File not found: {file_path}", error=True)
+    except PermissionError:
+        return _mcp(f"Permission denied: {file_path}", error=True)
+    except Exception as exc:
+        return _mcp(f"Failed to read {file_path}: {exc}", error=True)
+
+    count = content.count(old_string)
+    if count == 0:
+        return _mcp(f"old_string not found in {file_path}", error=True)
+    if count > 1 and not replace_all:
+        return _mcp(
+            f"old_string appears {count} times in {file_path}. "
+            "Use replace_all=true or provide a more unique string.",
+            error=True,
+        )
+
+    updated = (
+        content.replace(old_string, new_string)
+        if replace_all
+        else content.replace(old_string, new_string, 1)
+    )
+
+    try:
+        with open(resolved, "w", encoding="utf-8") as f:
+            f.write(updated)
+    except Exception as exc:
+        return _mcp(f"Failed to write {file_path}: {exc}", error=True)
+
+    return _mcp(f"Edited {resolved} ({count} replacement{'s' if count > 1 else ''})")
+
+
+async def _handle_edit_e2b(args: dict[str, Any]) -> dict[str, Any]:
+    """Edit a file, delegating to the E2B sandbox."""
+    from .e2b_file_tools import _handle_edit_file
+
+    file_path: str = args.get("file_path", "")
+    old_string: str = args.get("old_string", "")
+    new_string: str = args.get("new_string", "")
+
+    # Check truncation before delegating
+    if not file_path:
+        if old_string or new_string:
+            return _mcp(_EDIT_PARTIAL_TRUNCATION_MSG, error=True)
+        return _mcp(
+            "Your Edit call had empty arguments — this means your previous "
+            "response was too long and the tool call was truncated by the API. "
+            "Break your work into smaller steps.",
+            error=True,
+        )
+
+    return await _handle_edit_file(args)
+
+
+def get_edit_tool_handler(*, use_e2b: bool) -> Callable[..., Any]:
+    """Return the appropriate Edit handler for the current execution mode."""
+    if use_e2b:
+        return _handle_edit_e2b
+    return _handle_edit_non_e2b
+
+
+EDIT_TOOL_NAME = "Edit"
+EDIT_TOOL_DESCRIPTION = (
+    "Make targeted text replacements in a file. Finds old_string in the file "
+    "and replaces it with new_string. For replacing all occurrences, set "
+    "replace_all=true."
+)
+EDIT_TOOL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "file_path": {
+            "type": "string",
+            "description": (
+                "The path to the file to edit. "
+                "Relative paths are resolved against the working directory."
+            ),
+        },
+        "old_string": {
+            "type": "string",
+            "description": "The text to find in the file.",
+        },
+        "new_string": {
+            "type": "string",
+            "description": "The replacement text.",
+        },
+        "replace_all": {
+            "type": "boolean",
+            "description": (
+                "Replace all occurrences of old_string (default: false). "
+                "When false, old_string must appear exactly once."
+            ),
+        },
+    },
+    "required": ["file_path", "old_string", "new_string"],
 }

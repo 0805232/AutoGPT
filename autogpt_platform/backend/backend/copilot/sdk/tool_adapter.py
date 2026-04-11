@@ -40,9 +40,17 @@ from backend.util.truncate import truncate
 
 from .e2b_file_tools import E2B_FILE_TOOL_NAMES, E2B_FILE_TOOLS, bridge_and_annotate
 from .file_tools import (
+    EDIT_TOOL_DESCRIPTION,
+    EDIT_TOOL_NAME,
+    EDIT_TOOL_SCHEMA,
+    READ_TOOL_DESCRIPTION,
+    READ_TOOL_NAME,
+    READ_TOOL_SCHEMA,
     WRITE_TOOL_DESCRIPTION,
     WRITE_TOOL_NAME,
     WRITE_TOOL_SCHEMA,
+    get_edit_tool_handler,
+    get_read_tool_handler,
     get_write_tool_handler,
 )
 
@@ -641,6 +649,38 @@ def create_copilot_mcp_server(*, use_e2b: bool = False):
     )
     sdk_tools.append(write_tool)
 
+    # Unified Read tool — in non-E2B reads from SDK working dir, in E2B
+    # delegates to the sandbox.  Named "read_file" to match E2B naming.
+    # The CLI's built-in Read is NOT disabled (it's used internally for
+    # oversized tool results); our MCP version is an additional tool.
+    read_file_handler = get_read_tool_handler(use_e2b=use_e2b)
+    read_file_tool = tool(
+        READ_TOOL_NAME,
+        READ_TOOL_DESCRIPTION,
+        READ_TOOL_SCHEMA,
+        annotations=_PARALLEL_ANNOTATION,
+    )(
+        _make_truncating_wrapper(
+            read_file_handler, READ_TOOL_NAME, input_schema=READ_TOOL_SCHEMA
+        )
+    )
+    sdk_tools.append(read_file_tool)
+
+    # Unified Edit tool — replaces the CLI's built-in Edit which has no
+    # defence against output-token truncation.
+    edit_handler = get_edit_tool_handler(use_e2b=use_e2b)
+    edit_tool = tool(
+        EDIT_TOOL_NAME,
+        EDIT_TOOL_DESCRIPTION,
+        EDIT_TOOL_SCHEMA,
+        annotations=_PARALLEL_ANNOTATION,
+    )(
+        _make_truncating_wrapper(
+            edit_handler, EDIT_TOOL_NAME, input_schema=EDIT_TOOL_SCHEMA
+        )
+    )
+    sdk_tools.append(edit_tool)
+
     # Read tool for SDK-truncated tool results (always needed, read-only).
     read_tool = tool(
         _READ_TOOL_NAME,
@@ -683,11 +723,17 @@ _SDK_BUILTIN_TOOLS = [*_SDK_BUILTIN_FILE_TOOLS, *_SDK_BUILTIN_ALWAYS]
 #   "'file_path' is a required property" error, losing the user's work.
 #   All writes go through our MCP Write tool (file_tools.py) where we
 #   control validation and return actionable guidance.
+# Edit: same truncation risk as Write — the CLI's built-in Edit has no
+#   defence against output-token truncation.  All edits go through our
+#   MCP Edit tool (file_tools.py).
+# Note: Read is NOT disallowed — the CLI uses Read internally for
+#   oversized tool results.  Our MCP read_file is an additional tool.
 SDK_DISALLOWED_TOOLS = [
     "Bash",
     "WebFetch",
     "AskUserQuestion",
     "Write",
+    "Edit",
 ]
 
 # Tools that are blocked entirely in security hooks (defence-in-depth).
@@ -727,6 +773,8 @@ DANGEROUS_PATTERNS = [
 COPILOT_TOOL_NAMES = [
     *[f"{MCP_TOOL_PREFIX}{name}" for name in TOOL_REGISTRY.keys()],
     f"{MCP_TOOL_PREFIX}{WRITE_TOOL_NAME}",
+    f"{MCP_TOOL_PREFIX}{READ_TOOL_NAME}",
+    f"{MCP_TOOL_PREFIX}{EDIT_TOOL_NAME}",
     f"{MCP_TOOL_PREFIX}{_READ_TOOL_NAME}",
     *_SDK_BUILTIN_TOOLS,
 ]
@@ -744,6 +792,8 @@ def get_copilot_tool_names(*, use_e2b: bool = False) -> list[str]:
     return [
         *[f"{MCP_TOOL_PREFIX}{name}" for name in TOOL_REGISTRY.keys()],
         f"{MCP_TOOL_PREFIX}{WRITE_TOOL_NAME}",
+        f"{MCP_TOOL_PREFIX}{READ_TOOL_NAME}",
+        f"{MCP_TOOL_PREFIX}{EDIT_TOOL_NAME}",
         f"{MCP_TOOL_PREFIX}{_READ_TOOL_NAME}",
         *[f"{MCP_TOOL_PREFIX}{name}" for name in E2B_FILE_TOOL_NAMES],
         *_SDK_BUILTIN_ALWAYS,
