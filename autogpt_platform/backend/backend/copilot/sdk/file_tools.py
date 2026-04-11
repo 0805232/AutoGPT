@@ -178,7 +178,6 @@ WRITE_TOOL_SCHEMA: dict[str, Any] = {
             "description": "The content to write to the file.",
         },
     },
-    "required": ["file_path", "content"],
 }
 
 
@@ -327,7 +326,6 @@ READ_TOOL_SCHEMA: dict[str, Any] = {
             "description": "Number of lines to read. Default: 2000.",
         },
     },
-    "required": ["file_path"],
 }
 
 
@@ -377,7 +375,8 @@ async def _handle_edit_non_e2b(args: dict[str, Any]) -> dict[str, Any]:
     # the read-modify-write cycle and silently dropping changes.
     if resolved not in _edit_locks:
         _edit_locks[resolved] = asyncio.Lock()
-    async with _edit_locks[resolved]:
+    lock = _edit_locks[resolved]
+    async with lock:
         try:
             with open(resolved, encoding="utf-8") as f:
                 content = f.read()
@@ -409,6 +408,10 @@ async def _handle_edit_non_e2b(args: dict[str, Any]) -> dict[str, Any]:
                 f.write(updated)
         except Exception as exc:
             return _mcp(f"Failed to write {file_path}: {exc}", error=True)
+
+    # Evict lock when no other coroutine is waiting, preventing unbounded growth.
+    if not lock.locked() and _edit_locks.get(resolved) is lock:
+        _edit_locks.pop(resolved, None)
 
     return _mcp(f"Edited {resolved} ({count} replacement{'s' if count > 1 else ''})")
 
