@@ -57,6 +57,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -71,12 +72,21 @@ logger = logging.getLogger(__name__)
 # Forbidden patterns we scan for in captured request bodies
 # ---------------------------------------------------------------------------
 
-# Substring of the `tool_reference` content block that breaks OpenRouter's
-# stricter Zod validation in tool_result.content. PR #12294 root-cause.
-_FORBIDDEN_TOOL_REFERENCE = '"type": "tool_reference"'
+# Match the `tool_reference` content block that breaks OpenRouter's stricter
+# Zod validation in tool_result.content. PR #12294 root-cause.
+#
+# We use a whitespace-tolerant regex rather than a literal substring because
+# the Claude Code CLI is Node.js and `JSON.stringify` without an indent
+# argument emits no whitespace between the key, colon, and value
+# (`{"type":"tool_reference"}`), while a Python serializer would emit
+# `{"type": "tool_reference"}`. A naive substring with one specific spacing
+# would silently miss the real regression.
+_FORBIDDEN_TOOL_REFERENCE_RE = re.compile(r'"type"\s*:\s*"tool_reference"')
 
 # Beta string OpenRouter rejects in upstream issue #789. Can appear in
-# either `betas` arrays or the `anthropic-beta` header value.
+# either `betas` arrays or the `anthropic-beta` header value. This is a
+# unique opaque token (no JSON punctuation around it that could vary), so
+# a plain substring match is robust.
 _FORBIDDEN_CONTEXT_MANAGEMENT_BETA = "context-management-2025-06-27"
 
 
@@ -90,7 +100,7 @@ def _scan_request_for_forbidden_patterns(
     OpenRouter-incompatible features.
     """
     findings: list[str] = []
-    if _FORBIDDEN_TOOL_REFERENCE in body_text:
+    if _FORBIDDEN_TOOL_REFERENCE_RE.search(body_text):
         findings.append(
             "`tool_reference` content block in request body — "
             "PR #12294 / CLI 2.1.69 regression"
@@ -188,6 +198,7 @@ async def _start_fake_anthropic_server(
     answered with a valid streaming response.  Returns ``(runner, port)``
     so the caller can ``await runner.cleanup()`` when finished.
     """
+    import socket
 
     async def messages_handler(request: web.Request) -> web.StreamResponse:
         body = await request.text()
@@ -213,22 +224,28 @@ async def _start_fake_anthropic_server(
         await response.write_eof()
         return response
 
+    async def fallback_handler(_request: web.Request) -> web.Response:
+        # OAuth/profile endpoints the CLI may probe — answer 404 so it
+        # falls through quickly without retrying.
+        return web.Response(status=404)
+
     app = web.Application()
     app.router.add_post("/v1/messages", messages_handler)
-    # OAuth/profile endpoints the CLI may probe — answer 404 so it falls
-    # through quickly without retrying.
-    app.router.add_route("*", "/{tail:.*}", lambda _r: web.Response(status=404))
+    app.router.add_route("*", "/{tail:.*}", fallback_handler)
+
+    # Bind an ephemeral port ourselves so we can read it back via the
+    # public ``getsockname`` API rather than reaching into ``site._server``
+    # private aiohttp internals.
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    port: int = sock.getsockname()[1]
 
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
+    site = web.SockSite(runner, sock)
     await site.start()
 
-    server = site._server
-    assert server is not None
-    sockets = getattr(server, "sockets", None)
-    assert sockets is not None
-    port: int = sockets[0].getsockname()[1]
     return runner, port
 
 
@@ -334,6 +351,14 @@ async def _run_cli_against_fake_server(
         try:
             proc.kill()
         except ProcessLookupError:
+            pass
+        # Reap the process to avoid leaving a zombie + open pipe FDs.
+        # Without this the asyncio transport keeps the stdout/stderr
+        # pipes alive until the loop exits, and in CI loops where this
+        # test runs many times the file-descriptor count creeps up.
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except (asyncio.TimeoutError, TimeoutError):
             pass
         stdout_bytes, stderr_bytes = b"", b""
 
@@ -534,13 +559,14 @@ class TestResolveCliPath:
     def test_returns_none_when_env_var_points_to_missing_file(self, monkeypatch):
         monkeypatch.delenv("CHAT_CLAUDE_AGENT_CLI_PATH", raising=False)
         monkeypatch.setenv("CLAUDE_AGENT_CLI_PATH", "/nonexistent/path/to/claude")
-        # Should fall through to the bundled binary OR return None,
-        # but never raise.
+        # When the override is set but the file is missing, the resolver
+        # returns ``None`` outright — it does NOT silently fall through to
+        # the bundled binary, because doing so would defeat the purpose of
+        # the override (the operator explicitly asked for a specific path).
+        # The strict ``is None`` assertion catches any future regression
+        # that swaps this fail-loud behaviour for a silent fallback.
         resolved = _resolve_cli_path()
-        # We can't assert exact value (depends on whether the bundled
-        # CLI is installed in the test env) but the function must not
-        # raise — the caller is supposed to handle None gracefully.
-        assert resolved is None or resolved.is_file()
+        assert resolved is None
 
     def test_falls_back_to_bundled_when_env_var_unset(self, monkeypatch):
         monkeypatch.delenv("CLAUDE_AGENT_CLI_PATH", raising=False)
