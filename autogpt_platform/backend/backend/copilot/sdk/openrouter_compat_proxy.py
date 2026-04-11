@@ -469,18 +469,32 @@ class OpenRouterCompatProxy:
                 upstream_response.release()
 
         if stream_error is not None:
-            # Do NOT call ``write_eof`` — that would signal a clean end
-            # of stream to the client on top of a truncated body.
-            # Mark the connection for close (``Connection: close``) and
-            # skip the EOF so the aiohttp writer drops the connection
-            # mid-response.  The client's parser then raises a
-            # transport error and the caller can retry / surface the
-            # failure instead of silently consuming a corrupt body.
+            # Do NOT call ``write_eof`` or return the prepared
+            # ``downstream`` here — aiohttp finalises a returned
+            # StreamResponse (writing the terminating chunk /
+            # content-length / EOF) even if we skipped ``write_eof``
+            # ourselves, which would signal a clean end of stream to
+            # the client on top of the truncated body.  Instead abort
+            # the underlying transport directly so the client's
+            # parser surfaces a ``ClientPayloadError`` /
+            # ``ServerDisconnectedError`` and the caller can retry /
+            # surface the failure instead of silently consuming a
+            # corrupt body.
             try:
                 downstream.force_close()
             except Exception:  # pragma: no cover - defensive on transport
                 pass
-            return downstream
+            transport = request.transport
+            if transport is not None:
+                try:
+                    transport.abort()
+                except Exception:  # pragma: no cover - defensive on transport
+                    pass
+            # Re-raise the original stream error so aiohttp treats
+            # this handler as having failed; the transport is
+            # already aborted above so the client sees an abrupt
+            # disconnect either way.
+            raise stream_error
 
         await downstream.write_eof()
         return downstream
