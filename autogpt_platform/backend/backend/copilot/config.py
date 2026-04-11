@@ -182,7 +182,9 @@ class ChatConfig(BaseSettings):
         "features (the bundled CLI version in 0.1.46+ is broken against "
         "OpenRouter — see PR #12294 and "
         "anthropics/claude-agent-sdk-python#789). Falls back to the "
-        "bundled binary when unset.",
+        "bundled binary when unset. Reads from `CHAT_CLAUDE_AGENT_CLI_PATH` "
+        "or the unprefixed `CLAUDE_AGENT_CLI_PATH` environment variable "
+        "(same pattern as `api_key` / `base_url`).",
     )
     use_openrouter: bool = Field(
         default=True,
@@ -304,6 +306,26 @@ class ChatConfig(BaseSettings):
                 v = os.getenv("OPENAI_BASE_URL")
             if not v:
                 v = OPENROUTER_BASE_URL
+        return v
+
+    @field_validator("claude_agent_cli_path", mode="before")
+    @classmethod
+    def get_claude_agent_cli_path(cls, v):
+        """Resolve the Claude Code CLI override path from environment.
+
+        Accepts either the Pydantic-prefixed ``CHAT_CLAUDE_AGENT_CLI_PATH``
+        or the unprefixed ``CLAUDE_AGENT_CLI_PATH`` (matching the same
+        fallback pattern used by ``api_key`` / ``base_url``). Keeping the
+        unprefixed form working is important because the field is
+        primarily an operator escape hatch set via container/host env,
+        and the unprefixed name is what the PR description, the field
+        docstrings, and the reproduction test in
+        ``cli_openrouter_compat_test.py`` refer to.
+        """
+        if not v:
+            v = os.getenv("CHAT_CLAUDE_AGENT_CLI_PATH")
+            if not v:
+                v = os.getenv("CLAUDE_AGENT_CLI_PATH")
         return v
 
     # Prompt paths for different contexts

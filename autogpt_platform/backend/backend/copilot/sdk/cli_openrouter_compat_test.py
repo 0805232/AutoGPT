@@ -240,12 +240,19 @@ async def _start_fake_anthropic_server(
 def _resolve_cli_path() -> Path | None:
     """Return the Claude Code CLI binary the SDK would use.
 
-    Honours the same override mechanism as ``service.py``: explicit
-    ``CLAUDE_AGENT_CLI_PATH`` env var first (matching the new
-    ``ChatConfig.claude_agent_cli_path`` field), then the bundled
-    binary that ships with the installed ``claude-agent-sdk`` wheel.
+    Honours the same override mechanism as ``service.py`` /
+    ``ChatConfig.claude_agent_cli_path``: checks either the Pydantic-
+    prefixed ``CHAT_CLAUDE_AGENT_CLI_PATH`` or the unprefixed
+    ``CLAUDE_AGENT_CLI_PATH`` env var first, then falls back to the
+    bundled binary that ships with the installed ``claude-agent-sdk``
+    wheel. The two env var names are accepted at the config layer via
+    ``ChatConfig.get_claude_agent_cli_path`` and mirrored here so the
+    reproduction test picks up the same override regardless of which
+    form an operator sets.
     """
-    override = os.environ.get("CLAUDE_AGENT_CLI_PATH")
+    override = os.environ.get("CHAT_CLAUDE_AGENT_CLI_PATH") or os.environ.get(
+        "CLAUDE_AGENT_CLI_PATH"
+    )
     if override:
         candidate = Path(override)
         return candidate if candidate.is_file() else None
@@ -362,7 +369,8 @@ async def test_cli_does_not_send_openrouter_incompatible_features(caplog):
     if cli_path is None or not cli_path.is_file():
         pytest.skip(
             "No Claude Code CLI binary available (neither bundled nor "
-            "overridden via CLAUDE_AGENT_CLI_PATH); cannot reproduce."
+            "overridden via CLAUDE_AGENT_CLI_PATH / "
+            "CHAT_CLAUDE_AGENT_CLI_PATH); cannot reproduce."
         )
 
     captured: list[_CapturedRequest] = []
@@ -412,8 +420,8 @@ async def test_cli_does_not_send_openrouter_incompatible_features(caplog):
         "https://github.com/Significant-Gravitas/AutoGPT/pull/12294 and "
         "https://github.com/anthropics/claude-agent-sdk-python/issues/789. "
         "If you intended to upgrade, you must use a known-good CLI binary "
-        "via `claude_agent_cli_path` (env: `CLAUDE_AGENT_CLI_PATH`) "
-        "instead of the bundled one."
+        "via `claude_agent_cli_path` (env: `CLAUDE_AGENT_CLI_PATH` or "
+        "`CHAT_CLAUDE_AGENT_CLI_PATH`) instead of the bundled one."
     )
 
 
@@ -500,11 +508,31 @@ class TestResolveCliPath:
         fake_cli = tmp_path / "fake-claude"
         fake_cli.write_text("#!/bin/sh\necho fake\n")
         fake_cli.chmod(0o755)
+        monkeypatch.delenv("CHAT_CLAUDE_AGENT_CLI_PATH", raising=False)
         monkeypatch.setenv("CLAUDE_AGENT_CLI_PATH", str(fake_cli))
         resolved = _resolve_cli_path()
         assert resolved == fake_cli
 
+    def test_honours_chat_prefixed_env_var_when_file_exists(
+        self, tmp_path, monkeypatch
+    ):
+        """The Pydantic ``CHAT_`` prefix variant is also honoured.
+
+        Mirrors ``ChatConfig.get_claude_agent_cli_path`` which accepts
+        either ``CHAT_CLAUDE_AGENT_CLI_PATH`` (prefix applied by
+        ``pydantic_settings``) or the unprefixed ``CLAUDE_AGENT_CLI_PATH``
+        form documented in the PR and field docstring.
+        """
+        fake_cli = tmp_path / "fake-claude-prefixed"
+        fake_cli.write_text("#!/bin/sh\necho fake\n")
+        fake_cli.chmod(0o755)
+        monkeypatch.delenv("CLAUDE_AGENT_CLI_PATH", raising=False)
+        monkeypatch.setenv("CHAT_CLAUDE_AGENT_CLI_PATH", str(fake_cli))
+        resolved = _resolve_cli_path()
+        assert resolved == fake_cli
+
     def test_returns_none_when_env_var_points_to_missing_file(self, monkeypatch):
+        monkeypatch.delenv("CHAT_CLAUDE_AGENT_CLI_PATH", raising=False)
         monkeypatch.setenv("CLAUDE_AGENT_CLI_PATH", "/nonexistent/path/to/claude")
         # Should fall through to the bundled binary OR return None,
         # but never raise.
@@ -516,6 +544,7 @@ class TestResolveCliPath:
 
     def test_falls_back_to_bundled_when_env_var_unset(self, monkeypatch):
         monkeypatch.delenv("CLAUDE_AGENT_CLI_PATH", raising=False)
+        monkeypatch.delenv("CHAT_CLAUDE_AGENT_CLI_PATH", raising=False)
         # Same caveat as above — returns the bundled path or None,
         # depending on what's installed in the test env.
         resolved = _resolve_cli_path()
