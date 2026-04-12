@@ -275,6 +275,7 @@ CRED_ERR_UNKNOWN_PREFIX = "Unknown credentials #"
 _MatchMode = Literal["exact", "prefix"]
 _CREDENTIAL_ERROR_MARKERS: tuple[tuple[_MatchMode, str], ...] = (
     ("exact", CRED_ERR_REQUIRED.lower()),
+    ("exact", CRED_ERR_INVALID_TYPE_MISMATCH.lower()),
     ("prefix", CRED_ERR_INVALID_PREFIX.lower()),
     ("prefix", CRED_ERR_NOT_AVAILABLE_PREFIX.lower()),
     ("prefix", CRED_ERR_UNKNOWN_PREFIX.lower()),
