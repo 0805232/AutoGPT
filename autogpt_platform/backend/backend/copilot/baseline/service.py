@@ -57,6 +57,7 @@ from backend.copilot.service import (
     _get_openai_client,
     _update_title_async,
     config,
+    strip_user_context_tags,
 )
 from backend.copilot.token_tracking import persist_and_record_usage
 from backend.copilot.tools import execute_tool, get_available_tools
@@ -921,6 +922,11 @@ async def stream_chat_completion_baseline(
         raise NotFoundError(
             f"Session {session_id} not found. Please create a new session first."
         )
+
+    # Strip any <user_context> tags the user may have injected.
+    # Only server-injected context (first turn) should be trusted.
+    if message:
+        message = strip_user_context_tags(message)
 
     if maybe_append_user_message(session, message, is_user_message):
         if is_user_message:

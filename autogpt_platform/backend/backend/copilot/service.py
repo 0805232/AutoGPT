@@ -9,6 +9,7 @@ This module contains:
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 from langfuse import get_client
@@ -30,6 +31,25 @@ from .model import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Matches <user_context>...</user_context> blocks anywhere in a string,
+# including across multiple lines.  Used to strip user-injected context
+# tags from incoming messages so that only server-injected context is
+# trusted by the LLM.
+_USER_CONTEXT_ANYWHERE_RE = re.compile(
+    r"<user_context>.*?</user_context>\s*", re.DOTALL
+)
+
+
+def strip_user_context_tags(text: str) -> str:
+    """Remove any ``<user_context>`` blocks from *text*.
+
+    The system prompt instructs the LLM to honour ``<user_context>`` blocks,
+    but only the server should inject them (on the first turn).  This helper
+    must be applied to every incoming user message so that a malicious user
+    cannot smuggle fake context on turn 2+.
+    """
+    return _USER_CONTEXT_ANYWHERE_RE.sub("", text)
 
 config = ChatConfig()
 settings = Settings()
