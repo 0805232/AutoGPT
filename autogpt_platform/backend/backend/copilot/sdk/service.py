@@ -2242,15 +2242,6 @@ async def stream_chat_completion_sdk(
         if sdk_model:
             sdk_options_kwargs["model"] = sdk_model
 
-        # Tell the CLI to strip experimental betas (e.g.
-        # ``context-management-2025-06-27``) and ``tool_reference``
-        # content blocks so newer SDK / CLI versions work with
-        # OpenRouter's stricter validation.  This single env var
-        # replaces the old in-process compat proxy.
-        if sdk_env is None:
-            sdk_env = {}
-        sdk_env["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] = "1"
-
         if sdk_env:
             sdk_options_kwargs["env"] = sdk_env
         if use_resume and resume_file:

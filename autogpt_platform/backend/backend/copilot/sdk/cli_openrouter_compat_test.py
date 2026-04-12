@@ -460,7 +460,7 @@ def _assert_no_forbidden_patterns(
     "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1. This is expected — the env "
     "var guard in test_disable_experimental_betas_env_var_strips_headers "
     "is the real regression test.",
-    strict=False,
+    strict=True,
 )
 async def test_bare_cli_does_not_send_openrouter_incompatible_features():
     """Bare CLI reproduction (no env var workaround).
