@@ -2,7 +2,7 @@
 
 import { Alert, AlertDescription } from "@/components/molecules/Alert/Alert";
 import { Skeleton } from "@/components/atoms/Skeleton/Skeleton";
-import { formatMicrodollars } from "../helpers";
+import { formatMicrodollars, formatTokens } from "../helpers";
 import { SummaryCard } from "./SummaryCard";
 import { ProviderTable } from "./ProviderTable";
 import { UserTable } from "./UserTable";
@@ -215,7 +215,7 @@ export function PlatformCostContent({ searchParams }: Props) {
       ) : (
         <>
           {dashboard && (
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
               <SummaryCard
                 label="Known Cost"
                 value={formatMicrodollars(dashboard.total_cost_microdollars)}
@@ -233,6 +233,36 @@ export function PlatformCostContent({ searchParams }: Props) {
               <SummaryCard
                 label="Active Users"
                 value={dashboard.total_users.toLocaleString()}
+              />
+              <SummaryCard
+                label="Avg Cost / Request"
+                value={
+                  dashboard.avg_cost_microdollars_per_request
+                    ? formatMicrodollars(
+                        dashboard.avg_cost_microdollars_per_request,
+                      )
+                    : "$0.00"
+                }
+                subtitle="Known cost divided by total requests"
+              />
+              <SummaryCard
+                label="Avg Input Tokens"
+                value={Math.round(
+                  dashboard.avg_input_tokens_per_request ?? 0,
+                ).toLocaleString()}
+                subtitle="Prompt tokens per request (context size)"
+              />
+              <SummaryCard
+                label="Avg Output Tokens"
+                value={Math.round(
+                  dashboard.avg_output_tokens_per_request ?? 0,
+                ).toLocaleString()}
+                subtitle="Completion tokens per request (response length)"
+              />
+              <SummaryCard
+                label="Total Tokens"
+                value={`${formatTokens(dashboard.total_input_tokens ?? 0)} in / ${formatTokens(dashboard.total_output_tokens ?? 0)} out`}
+                subtitle="Prompt vs completion token split"
               />
             </div>
           )}

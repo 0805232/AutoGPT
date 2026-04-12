@@ -167,6 +167,11 @@ class PlatformCostDashboard(BaseModel):
     total_cost_microdollars: int
     total_requests: int
     total_users: int
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    avg_input_tokens_per_request: float = 0.0
+    avg_output_tokens_per_request: float = 0.0
+    avg_cost_microdollars_per_request: float = 0.0
 
 
 def _si(row: dict, field: str) -> int:
@@ -293,7 +298,11 @@ async def get_platform_cost_dashboard(
             PrismaLog.prisma().group_by(
                 by=["provider"],
                 where=where,
-                sum={"costMicrodollars": True},
+                sum={
+                    "costMicrodollars": True,
+                    "inputTokens": True,
+                    "outputTokens": True,
+                },
                 count=True,
             ),
         )
@@ -322,6 +331,8 @@ async def get_platform_cost_dashboard(
     # Grand totals — sum across all provider groups (no LIMIT applied above).
     total_cost = sum(_si(r, "costMicrodollars") for r in total_agg_groups)
     total_requests = sum(_ca(r) for r in total_agg_groups)
+    total_input_tokens = sum(_si(r, "inputTokens") for r in total_agg_groups)
+    total_output_tokens = sum(_si(r, "outputTokens") for r in total_agg_groups)
 
     return PlatformCostDashboard(
         by_provider=[
@@ -354,6 +365,17 @@ async def get_platform_cost_dashboard(
         total_cost_microdollars=total_cost,
         total_requests=total_requests,
         total_users=total_users,
+        total_input_tokens=total_input_tokens,
+        total_output_tokens=total_output_tokens,
+        avg_input_tokens_per_request=(
+            total_input_tokens / total_requests if total_requests > 0 else 0.0
+        ),
+        avg_output_tokens_per_request=(
+            total_output_tokens / total_requests if total_requests > 0 else 0.0
+        ),
+        avg_cost_microdollars_per_request=(
+            total_cost / total_requests if total_requests > 0 else 0.0
+        ),
     )
 
 

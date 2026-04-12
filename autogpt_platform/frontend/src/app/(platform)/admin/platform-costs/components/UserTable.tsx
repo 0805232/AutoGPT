@@ -26,6 +26,9 @@ function UserTable({ data }: Props) {
             <th scope="col" className="px-4 py-3 text-right">
               Output Tokens
             </th>
+            <th scope="col" className="px-4 py-3 text-right">
+              Avg Cost / Req
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -54,12 +57,21 @@ function UserTable({ data }: Props) {
               <td className="px-4 py-3 text-right">
                 {formatTokens(row.total_output_tokens)}
               </td>
+              <td className="px-4 py-3 text-right">
+                {row.request_count > 0 && row.total_cost_microdollars > 0
+                  ? formatMicrodollars(
+                      Math.round(
+                        row.total_cost_microdollars / row.request_count,
+                      ),
+                    )
+                  : "-"}
+              </td>
             </tr>
           ))}
           {data.length === 0 && (
             <tr>
               <td
-                colSpan={5}
+                colSpan={6}
                 className="px-4 py-8 text-center text-muted-foreground"
               >
                 No cost data yet

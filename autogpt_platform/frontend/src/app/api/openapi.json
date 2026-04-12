@@ -12141,7 +12141,12 @@
             "title": "Total Cost Microdollars"
           },
           "total_requests": { "type": "integer", "title": "Total Requests" },
-          "total_users": { "type": "integer", "title": "Total Users" }
+          "total_users": { "type": "integer", "title": "Total Users" },
+          "total_input_tokens": { "type": "integer", "title": "Total Input Tokens", "default": 0 },
+          "total_output_tokens": { "type": "integer", "title": "Total Output Tokens", "default": 0 },
+          "avg_input_tokens_per_request": { "type": "number", "title": "Avg Input Tokens Per Request", "default": 0.0 },
+          "avg_output_tokens_per_request": { "type": "number", "title": "Avg Output Tokens Per Request", "default": 0.0 },
+          "avg_cost_microdollars_per_request": { "type": "number", "title": "Avg Cost Microdollars Per Request", "default": 0.0 }
         },
         "type": "object",
         "required": [
