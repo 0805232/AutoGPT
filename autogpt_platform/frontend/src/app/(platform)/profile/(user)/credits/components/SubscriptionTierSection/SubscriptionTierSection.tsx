@@ -211,7 +211,7 @@ export function SubscriptionTierSection() {
             >
               Cancel
             </Button>
-            <Button variant="destructive" onClick={confirmDowngrade}>
+            <Button variant="destructive" onClick={() => void confirmDowngrade()}>
               Confirm Downgrade
             </Button>
           </Dialog.Footer>
