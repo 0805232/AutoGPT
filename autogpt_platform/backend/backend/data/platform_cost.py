@@ -271,12 +271,12 @@ def _build_raw_where(
     idx += 1
 
     if start is not None:
-        clauses.append(f'"createdAt" >= ${idx}')
+        clauses.append(f'"createdAt" >= ${idx}::timestamptz')
         params.append(start)
         idx += 1
 
     if end is not None:
-        clauses.append(f'"createdAt" <= ${idx}')
+        clauses.append(f'"createdAt" <= ${idx}::timestamptz')
         params.append(end)
         idx += 1
 
