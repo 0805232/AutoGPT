@@ -72,6 +72,7 @@ async def test_sync_subscription_from_stripe_active():
 
     empty_list = MagicMock()
     empty_list.data = []
+    empty_list.has_more = False
 
     with (
         patch(
@@ -114,6 +115,7 @@ async def test_sync_subscription_from_stripe_idempotent_no_write_if_unchanged():
 
     empty_list = MagicMock()
     empty_list.data = []
+    empty_list.has_more = False
 
     with (
         patch(
@@ -172,6 +174,7 @@ async def test_sync_subscription_from_stripe_cancelled():
     }
     empty_list = MagicMock()
     empty_list.data = []
+    empty_list.has_more = False
     with (
         patch(
             "backend.data.credit.User.prisma",
@@ -208,8 +211,10 @@ async def test_sync_subscription_from_stripe_cancelled_but_other_active_sub_exis
     # Stripe still shows sub_new as active for this customer.
     active_list = MagicMock()
     active_list.data = [{"id": "sub_new"}]
+    active_list.has_more = False
     empty_list = MagicMock()
     empty_list.data = []
+    empty_list.has_more = False
 
     def list_side_effect(*args, **kwargs):
         if kwargs.get("status") == "active":
@@ -254,6 +259,7 @@ async def test_sync_subscription_from_stripe_trialing():
 
     empty_list = MagicMock()
     empty_list.data = []
+    empty_list.has_more = False
 
     with (
         patch(
@@ -295,6 +301,7 @@ async def test_sync_subscription_from_stripe_unknown_customer():
 async def test_cancel_stripe_subscription_cancels_active():
     mock_subscriptions = MagicMock()
     mock_subscriptions.data = [{"id": "sub_abc123"}]
+    mock_subscriptions.has_more = False
 
     with (
         patch(
@@ -317,6 +324,7 @@ async def test_cancel_stripe_subscription_multi_partial_failure():
     """First cancel raises → error propagates and subsequent subs are not cancelled."""
     mock_subscriptions = MagicMock()
     mock_subscriptions.data = [{"id": "sub_first"}, {"id": "sub_second"}]
+    mock_subscriptions.has_more = False
 
     with (
         patch(
@@ -335,8 +343,11 @@ async def test_cancel_stripe_subscription_multi_partial_failure():
     ):
         with pytest.raises(stripe.StripeError):
             await cancel_stripe_subscription("user-1")
-        # Only the first cancel should have been attempted — the loop must abort
-        # instead of silently leaving a leaked active subscription.
+        # Only the first cancel should have been attempted.
+        # _cancel_customer_subscriptions has no per-cancel try/except, so the
+        # StripeError propagates immediately, aborting the loop before sub_second
+        # is attempted. This is intentional fail-fast behaviour — the caller
+        # (cancel_stripe_subscription) re-raises and the API handler returns 502.
         mock_cancel.assert_called_once_with("sub_first")
 
 
@@ -344,6 +355,7 @@ async def test_cancel_stripe_subscription_multi_partial_failure():
 async def test_cancel_stripe_subscription_no_active():
     mock_subscriptions = MagicMock()
     mock_subscriptions.data = []
+    mock_subscriptions.has_more = False
 
     with (
         patch(
@@ -384,8 +396,10 @@ async def test_cancel_stripe_subscription_cancels_trialing():
     """Trialing subs must also be cancelled, else users get billed after trial end."""
     active_subs = MagicMock()
     active_subs.data = []
+    active_subs.has_more = False
     trialing_subs = MagicMock()
     trialing_subs.data = [{"id": "sub_trial_123"}]
+    trialing_subs.has_more = False
 
     def list_side_effect(*args, **kwargs):
         return trialing_subs if kwargs.get("status") == "trialing" else active_subs
@@ -411,8 +425,10 @@ async def test_cancel_stripe_subscription_cancels_active_and_trialing():
     """Both active AND trialing subs present → both get cancelled, no duplicates."""
     active_subs = MagicMock()
     active_subs.data = [{"id": "sub_active_1"}]
+    active_subs.has_more = False
     trialing_subs = MagicMock()
     trialing_subs.data = [{"id": "sub_trial_2"}]
+    trialing_subs.has_more = False
 
     def list_side_effect(*args, **kwargs):
         return trialing_subs if kwargs.get("status") == "trialing" else active_subs
@@ -559,6 +575,7 @@ async def test_sync_subscription_from_stripe_business_tier():
 
     empty_list = MagicMock()
     empty_list.data = []
+    empty_list.has_more = False
 
     with (
         patch(
@@ -606,6 +623,7 @@ async def test_sync_subscription_from_stripe_cancels_stale_subs():
 
     existing = MagicMock()
     existing.data = [{"id": "sub_old"}, {"id": "sub_new"}]
+    existing.has_more = False
 
     with (
         patch(
@@ -655,6 +673,7 @@ async def test_sync_subscription_from_stripe_stale_cancel_errors_swallowed():
 
     existing = MagicMock()
     existing.data = [{"id": "sub_old"}]
+    existing.has_more = False
 
     with (
         patch(
@@ -723,6 +742,7 @@ async def test_cancel_stripe_subscription_raises_on_cancel_error():
 
     mock_subscriptions = MagicMock()
     mock_subscriptions.data = [{"id": "sub_abc123"}]
+    mock_subscriptions.has_more = False
 
     with (
         patch(

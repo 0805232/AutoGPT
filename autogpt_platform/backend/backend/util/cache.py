@@ -73,10 +73,29 @@ def _get_redis() -> Redis:
     return r
 
 
+class _MissingType:
+    """Singleton sentinel type — distinct from ``None`` (a valid cached value).
+
+    Using a dedicated class (instead of ``Any = object()``) lets mypy prove
+    that comparisons ``result is _MISSING`` narrow the type correctly and
+    prevents accidental use of the sentinel where a real value is expected.
+    """
+
+    _instance: "_MissingType | None" = None
+
+    def __new__(cls) -> "_MissingType":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        return "<MISSING>"
+
+
 # Sentinel returned by ``_get_from_memory`` / ``_get_from_redis`` to mean
 # "no entry exists" — distinct from a cached ``None`` value, which is a
 # valid result for callers that opt into caching it.
-_MISSING: Any = object()
+_MISSING = _MissingType()
 
 
 @dataclass
