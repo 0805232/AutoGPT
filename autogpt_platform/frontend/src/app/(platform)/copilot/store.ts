@@ -342,12 +342,13 @@ export const useCopilotUIStore = create<CopilotUIState>((set) => ({
     }),
   restoreSessionMode: (sessionId) =>
     set((state) => {
-      const mode = state.sessionModes.get(sessionId);
-      if (mode && mode !== state.copilotMode) {
+      // Use recorded mode, or default to extended_thinking for sessions
+      // created before the per-session mode tracking was added.
+      const mode = state.sessionModes.get(sessionId) ?? "extended_thinking";
+      if (mode !== state.copilotMode) {
         storage.set(Key.COPILOT_MODE, mode);
         return { copilotMode: mode };
       }
-      // Return same state reference to skip unnecessary re-render
       return state;
     }),
   removeSessionMode: (sessionId) =>
