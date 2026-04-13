@@ -26,7 +26,6 @@ from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolPara
 from opentelemetry import trace as otel_trace
 
 from backend.copilot.config import CopilotMode
-from backend.copilot.thinking_stripper import ThinkingStripper as _ThinkingStripper
 from backend.copilot.context import get_workspace_manager, set_execution_context
 from backend.copilot.db import update_message_content_by_sequence
 from backend.copilot.graphiti.config import is_enabled_for_user
@@ -59,6 +58,7 @@ from backend.copilot.service import (
     _update_title_async,
     config,
 )
+from backend.copilot.thinking_stripper import ThinkingStripper as _ThinkingStripper
 from backend.copilot.token_tracking import persist_and_record_usage
 from backend.copilot.tools import execute_tool, get_available_tools
 from backend.copilot.tracking import track_user_message
