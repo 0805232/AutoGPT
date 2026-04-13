@@ -1661,6 +1661,13 @@ async def _run_stream_attempt(
                 #   cache_read_input_tokens = served from cache
                 #   cache_creation_input_tokens = written to cache
                 if sdk_msg.usage:
+                    # Log raw usage dict to discover all available fields
+                    # (including potential thinking_tokens not yet extracted)
+                    logger.info(
+                        "%s Raw SDK usage dict: %s",
+                        ctx.log_prefix,
+                        dict(sdk_msg.usage),
+                    )
                     state.usage.prompt_tokens += sdk_msg.usage.get("input_tokens", 0)
                     state.usage.cache_read_tokens += sdk_msg.usage.get(
                         "cache_read_input_tokens", 0
