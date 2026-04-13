@@ -5,6 +5,7 @@ import { ArrowRightIcon } from "@phosphor-icons/react";
 import NextLink from "next/link";
 import { StatusBadge } from "@/app/(platform)/library/components/StatusBadge/StatusBadge";
 import type { AgentStatus } from "@/app/(platform)/library/types";
+import styles from "./PulseChips.module.css";
 
 export interface PulseChipData {
   id: string;
@@ -22,9 +23,9 @@ export function PulseChips({ chips, onChipClick }: Props) {
   if (chips.length === 0) return null;
 
   return (
-    <div className="mb-6">
-      <div className="mb-3 flex items-center justify-between">
-        <Text variant="small-medium" className="text-zinc-600">
+    <div className={`${styles.glassPanel} mb-6 rounded-large px-2 py-4`}>
+      <div className="mb-3 flex items-center gap-3">
+        <Text variant="body-medium" className="text-zinc-600">
           What&apos;s happening with your agents
         </Text>
         <NextLink
@@ -34,7 +35,7 @@ export function PulseChips({ chips, onChipClick }: Props) {
           View all <ArrowRightIcon size={12} />
         </NextLink>
       </div>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex gap-2 overflow-x-auto">
         {chips.map((chip) => (
           <PulseChip key={chip.id} chip={chip} onClick={onChipClick} />
         ))}
@@ -58,7 +59,7 @@ function PulseChip({ chip, onClick }: ChipProps) {
     <button
       type="button"
       onClick={handleClick}
-      className="flex items-center gap-2 rounded-medium border border-zinc-100 bg-white px-3 py-2 text-left transition-all hover:border-zinc-200 hover:shadow-sm"
+      className="flex shrink-0 items-center gap-2 rounded-medium border border-zinc-100 bg-white px-3 py-2 text-left transition-all hover:border-zinc-200"
     >
       <StatusBadge status={chip.status} />
       <div className="min-w-0">

@@ -21,9 +21,10 @@ import { useToast } from "@/components/molecules/Toast/use-toast";
 import { useFavoriteAgents } from "../../hooks/useFavoriteAgents";
 import { getQueryClient } from "@/lib/react-query/queryClient";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentStatusFilter } from "../../types";
-import { mockStatusForAgent } from "../../hooks/useAgentStatus";
+import { useGetV1ListAllExecutions } from "@/app/api/__generated__/endpoints/graphs/graphs";
+import { AgentExecutionStatus } from "@/app/api/__generated__/models/agentExecutionStatus";
 
 const FILTER_EXHAUST_THRESHOLD = 3;
 
@@ -211,8 +212,40 @@ export function useLibraryAgentList({
   // always covers the full fleet, not just the currently filtered view.
   const allAgents = agents;
 
-  // Client-side filter by status using mock data until the real API supports it.
-  const filteredAgents = filterAgentsByStatus(agents, statusFilter);
+  const { data: executions } = useGetV1ListAllExecutions({
+    query: { select: okData },
+  });
+
+  const { activeGraphIds, errorGraphIds } = useMemo(() => {
+    const active = new Set<string>();
+    const errors = new Set<string>();
+    const cutoff = Date.now() - 72 * 60 * 60 * 1000;
+    for (const exec of executions ?? []) {
+      if (
+        exec.status === AgentExecutionStatus.RUNNING ||
+        exec.status === AgentExecutionStatus.QUEUED ||
+        exec.status === AgentExecutionStatus.REVIEW
+      ) {
+        active.add(exec.graph_id);
+      }
+      if (
+        (exec.status === AgentExecutionStatus.FAILED ||
+          exec.status === AgentExecutionStatus.TERMINATED) &&
+        exec.ended_at &&
+        new Date(exec.ended_at as string).getTime() > cutoff
+      ) {
+        errors.add(exec.graph_id);
+      }
+    }
+    return { activeGraphIds: active, errorGraphIds: errors };
+  }, [executions]);
+
+  const filteredAgents = filterAgentsByStatus(
+    agents,
+    statusFilter,
+    activeGraphIds,
+    errorGraphIds,
+  );
 
   // Track consecutive pages that produced no new filtered items
   useEffect(() => {
@@ -281,15 +314,42 @@ export function useLibraryAgentList({
   };
 }
 
-function filterAgentsByStatus<T extends { id: string }>(
+function filterAgentsByStatus<
+  T extends {
+    graph_id: string;
+    has_external_trigger: boolean;
+    recommended_schedule_cron?: string | null;
+  },
+>(
   agents: T[],
   statusFilter: AgentStatusFilter,
+  activeGraphIds: Set<string>,
+  errorGraphIds: Set<string>,
 ): T[] {
   if (statusFilter === "all") return agents;
   return agents.filter((agent) => {
-    const info = mockStatusForAgent(agent.id);
-    if (statusFilter === "attention") return info.health === "attention";
-    if (statusFilter === "healthy") return info.health === "good";
-    return info.status === statusFilter;
+    const isRunning = activeGraphIds.has(agent.graph_id);
+    const hasError = errorGraphIds.has(agent.graph_id);
+
+    if (statusFilter === "running") return isRunning;
+    if (statusFilter === "attention") return hasError && !isRunning;
+    if (statusFilter === "listening")
+      return !isRunning && !hasError && agent.has_external_trigger;
+    if (statusFilter === "scheduled")
+      return (
+        !isRunning &&
+        !hasError &&
+        !agent.has_external_trigger &&
+        !!agent.recommended_schedule_cron
+      );
+    if (statusFilter === "idle")
+      return (
+        !isRunning &&
+        !hasError &&
+        !agent.has_external_trigger &&
+        !agent.recommended_schedule_cron
+      );
+    if (statusFilter === "healthy") return !hasError;
+    return true;
   });
 }

@@ -69,10 +69,10 @@ export function LibraryFolder({
     <div
       data-testid="library-folder"
       data-folder-id={id}
-      className={`group relative inline-flex h-[10.625rem] w-full max-w-[25rem] cursor-pointer flex-col items-start justify-between gap-2.5 rounded-medium border p-4 transition-all duration-200 hover:shadow-md ${
+      className={`group relative inline-flex h-[10.625rem] w-full max-w-[25rem] cursor-pointer flex-col items-start justify-between gap-2.5 rounded-medium border p-4 shadow-sm backdrop-blur-md transition-all duration-200 hover:shadow-md ${
         isDragOver
           ? "border-blue-400 bg-blue-50 ring-2 ring-blue-200"
-          : `${cardStyle.border} ${cardStyle.bg}`
+          : "border-indigo-200/40 bg-gradient-to-br from-indigo-50/40 via-white/70 to-purple-50/30"
       }`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
@@ -81,7 +81,7 @@ export function LibraryFolder({
       onDrop={handleDrop}
       onClick={onClick}
     >
-      <div className="flex w-full items-start justify-between gap-4">
+      <div className="flex w-full items-center justify-between gap-4">
         {/* Left side - Folder name and agent count */}
         <div className="flex flex-1 flex-col gap-2">
           <Text
@@ -89,7 +89,7 @@ export function LibraryFolder({
             data-testid="library-folder-name"
             className="line-clamp-2 hyphens-auto break-words"
           >
-            {name}
+            {name} Folder
           </Text>
           <div className="flex items-center gap-2">
             <Text
@@ -106,7 +106,7 @@ export function LibraryFolder({
         </div>
 
         {/* Right side - Custom folder icon */}
-        <div className="flex-shrink-0">
+        <div className="relative top-5 flex flex-shrink-0 items-center">
           <FolderIcon isOpen={isHovered} color={color} icon={icon} />
         </div>
       </div>
@@ -124,7 +124,7 @@ export function LibraryFolder({
             e.stopPropagation();
             onEdit?.();
           }}
-          className={`h-8 w-8 border p-2 ${cardStyle.buttonBase} ${cardStyle.buttonHover}`}
+          className="h-8 w-8 border border-neutral-200 bg-white/80 p-2 text-neutral-500 hover:bg-white hover:text-neutral-700"
         >
           <PencilSimpleIcon className="h-4 w-4" />
         </Button>
@@ -136,7 +136,7 @@ export function LibraryFolder({
             e.stopPropagation();
             onDelete?.();
           }}
-          className={`h-8 w-8 border p-2 ${cardStyle.buttonBase} ${cardStyle.buttonHover}`}
+          className="h-8 w-8 border border-neutral-200 bg-white/80 p-2 text-neutral-500 hover:bg-white hover:text-neutral-700"
         >
           <TrashIcon className="h-4 w-4" />
         </Button>

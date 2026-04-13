@@ -1,43 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useGetV2ListLibraryAgents } from "@/app/api/__generated__/endpoints/library/library";
+import { useSitrepItems } from "@/app/(platform)/library/components/SitrepItem/useSitrepItems";
 import type { PulseChipData } from "./PulseChips";
-import type { AgentStatus } from "@/app/(platform)/library/types";
+import { useMemo } from "react";
 
-/**
- * Provides a prioritised list of pulse chips for the Home empty state.
- * Errors → running → stale, max 5 chips.
- *
- * TODO: Replace with real API data from `GET /agents/summary` or similar.
- */
 export function usePulseChips(): PulseChipData[] {
-  const [chips] = useState<PulseChipData[]>(() => MOCK_CHIPS);
-  return chips;
-}
+  const { data: response } = useGetV2ListLibraryAgents();
 
-const MOCK_CHIPS: PulseChipData[] = [
-  {
-    id: "chip-1",
-    name: "Lead Finder",
-    status: "error" as AgentStatus,
-    shortMessage: "API rate limit hit",
-  },
-  {
-    id: "chip-2",
-    name: "CEO Finder",
-    status: "running" as AgentStatus,
-    shortMessage: "72% complete",
-  },
-  {
-    id: "chip-3",
-    name: "Cart Recovery",
-    status: "idle" as AgentStatus,
-    shortMessage: "No runs in 3 weeks",
-  },
-  {
-    id: "chip-4",
-    name: "Social Collector",
-    status: "listening" as AgentStatus,
-    shortMessage: "Waiting for trigger",
-  },
-];
+  const agents = useMemo(
+    () => (response?.status === 200 ? response.data.agents : []),
+    [response],
+  );
+
+  const sitrepItems = useSitrepItems(agents, 5);
+
+  return useMemo(() => {
+    return sitrepItems.map((item) => ({
+      id: item.id,
+      name: item.agentName,
+      status: item.status,
+      shortMessage: item.message,
+    }));
+  }, [sitrepItems]);
+}

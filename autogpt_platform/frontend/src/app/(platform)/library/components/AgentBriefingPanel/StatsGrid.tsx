@@ -31,7 +31,7 @@ const TILES: {
     label: "Running now",
     key: "running",
     filter: "running",
-    emoji: "🏃",
+    emoji: "🚩",
     color: "text-blue-600",
   },
   {
@@ -45,7 +45,7 @@ const TILES: {
     label: "Listening",
     key: "listening",
     filter: "listening",
-    emoji: "👂",
+    emoji: "🔊",
     color: "text-purple-500",
   },
   {
@@ -77,19 +77,17 @@ export function StatsGrid({ summary, activeTab, onTabChange }: Props) {
           <button
             key={tile.label}
             type="button"
-            disabled={isEmpty}
             onClick={() => onTabChange(tile.filter)}
             className={cn(
-              "flex flex-col gap-1 rounded-medium border p-3 text-left transition-all",
-              isEmpty ? "cursor-default" : "hover:shadow-sm",
+              "flex flex-col gap-1 rounded-medium border p-3 text-left shadow-md transition-all hover:shadow-lg",
               isActive
                 ? "border-zinc-900 bg-zinc-50"
                 : "border-zinc-100 bg-white",
             )}
           >
             <div className="flex items-center gap-1.5">
-              <Emoji text={tile.emoji} size={14} />
-              <Text variant="body" className="text-zinc-600">
+              <Emoji text={tile.emoji} size={18} />
+              <Text variant="body" className="text-zinc-800">
                 {tile.label}
               </Text>
             </div>

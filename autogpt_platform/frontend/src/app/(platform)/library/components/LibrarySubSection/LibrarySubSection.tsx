@@ -75,7 +75,7 @@ export function LibrarySubSection({
           ))}
         </TabsLineList>
       </TabsLine>
-      <div className="hidden items-center gap-6 md:flex">
+      <div className="relative top-1.5 hidden items-center gap-6 md:flex">
         <LibraryFolderCreationDialog />
         {fleetSummary && onStatusFilterChange && (
           <AgentFilterMenu

@@ -1,6 +1,5 @@
 "use client";
 
-import { Button } from "@/components/atoms/Button/Button";
 import {
   EyeIcon,
   ArrowsClockwiseIcon,
@@ -8,6 +7,7 @@ import {
   PlayIcon,
   ArrowCounterClockwiseIcon,
 } from "@phosphor-icons/react";
+import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import type { AgentStatus } from "../../types";
 
@@ -42,15 +42,17 @@ export function ContextualActionButton({
   }
 
   return (
-    <Button
-      variant="outline"
-      size="small"
+    <button
+      type="button"
       onClick={handleClick}
-      leftIcon={<Icon size={14} />}
-      className={className}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-[13px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 hover:text-zinc-800",
+        className,
+      )}
     >
       {config.label}
-    </Button>
+      <Icon size={14} className="shrink-0" />
+    </button>
   );
 }
 
@@ -61,6 +63,6 @@ const ACTION_CONFIG: Record<
   error: { label: "View error", icon: EyeIcon },
   listening: { label: "Reconnect", icon: ArrowsClockwiseIcon },
   running: { label: "Watch live", icon: MonitorPlayIcon },
-  idle: { label: "Run now", icon: PlayIcon },
-  scheduled: { label: "Run now", icon: ArrowCounterClockwiseIcon },
+  idle: { label: "Run", icon: PlayIcon },
+  scheduled: { label: "Run", icon: ArrowCounterClockwiseIcon },
 };

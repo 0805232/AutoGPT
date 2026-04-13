@@ -1,13 +1,12 @@
 "use client";
 
 import { Text } from "@/components/atoms/Text/Text";
-import { Button } from "@/components/atoms/Button/Button";
-import { CaretUpIcon, CaretDownIcon } from "@phosphor-icons/react";
 import type { LibraryAgent } from "@/app/api/__generated__/models/libraryAgent";
 import { useState } from "react";
 import type { FleetSummary, AgentStatusFilter } from "../../types";
 import { BriefingTabContent } from "./BriefingTabContent";
 import { StatsGrid } from "./StatsGrid";
+import styles from "./AgentBriefingPanel.module.css";
 
 interface Props {
   summary: FleetSummary;
@@ -15,38 +14,20 @@ interface Props {
 }
 
 export function AgentBriefingPanel({ summary, agents }: Props) {
-  const [isCollapsed, setIsCollapsed] = useState(false);
   const defaultTab: AgentStatusFilter = summary.running > 0 ? "running" : "all";
   const [activeTab, setActiveTab] = useState<AgentStatusFilter>(defaultTab);
 
   return (
-    <div className="rounded-large border border-zinc-100 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between">
-        <Text variant="h5">Agent Briefing</Text>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          aria-label={isCollapsed ? "Expand briefing" : "Collapse briefing"}
-        >
-          {isCollapsed ? (
-            <CaretDownIcon size={16} />
-          ) : (
-            <CaretUpIcon size={16} />
-          )}
-        </Button>
+    <div className={`${styles.glassPanel} min-h-[14.75rem] rounded-large bg-gradient-to-br from-indigo-50/60 via-white/80 to-purple-50/50 px-5 pb-5 pt-2 shadow-sm backdrop-blur-md`}>
+      <Text variant="h5">Agent Briefing</Text>
+      <div className="mt-4 space-y-5">
+        <StatsGrid
+          summary={summary}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+        />
+        <BriefingTabContent activeTab={activeTab} agents={agents} />
       </div>
-
-      {!isCollapsed && (
-        <div className="mt-4 space-y-5">
-          <StatsGrid
-            summary={summary}
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
-          />
-          <BriefingTabContent activeTab={activeTab} agents={agents} />
-        </div>
-      )}
     </div>
   );
 }

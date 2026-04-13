@@ -1,6 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useGetV1ListAllExecutions } from "@/app/api/__generated__/endpoints/graphs/graphs";
+import { AgentExecutionStatus } from "@/app/api/__generated__/models/agentExecutionStatus";
+import type { LibraryAgent } from "@/app/api/__generated__/models/libraryAgent";
+import { okData } from "@/app/api/helpers";
 import type {
   AgentStatus,
   AgentHealth,
@@ -8,10 +12,23 @@ import type {
   FleetSummary,
 } from "../types";
 
-/**
- * Derive health from status and recency.
- * TODO: Replace with real computation once backend provides the data.
- */
+const SEVENTY_TWO_HOURS_MS = 72 * 60 * 60 * 1000;
+
+function isActive(status: string): boolean {
+  return (
+    status === AgentExecutionStatus.RUNNING ||
+    status === AgentExecutionStatus.QUEUED ||
+    status === AgentExecutionStatus.REVIEW
+  );
+}
+
+function isFailed(status: string): boolean {
+  return (
+    status === AgentExecutionStatus.FAILED ||
+    status === AgentExecutionStatus.TERMINATED
+  );
+}
+
 function deriveHealth(
   status: AgentStatus,
   lastRunAt: string | null,
@@ -25,72 +42,86 @@ function deriveHealth(
   return "good";
 }
 
-/**
- * Generate deterministic mock status for an agent based on its ID.
- * This allows the UI to render realistic data before the real API is built.
- * TODO: Replace with real API call `GET /agents/:id/status`.
- */
-function mockStatusForAgent(agentID: string): AgentStatusInfo {
-  const hash = simpleHash(agentID);
-  const statuses: AgentStatus[] = [
-    "running",
-    "error",
-    "listening",
-    "scheduled",
-    "idle",
-  ];
-  const status = statuses[hash % statuses.length];
-  const progress = status === "running" ? (hash * 17) % 100 : null;
-  const totalRuns = (hash % 200) + 1;
-  const daysAgo = (hash % 30) + 1;
-  const lastRunAt = new Date(
-    Date.now() - daysAgo * 24 * 60 * 60 * 1000,
-  ).toISOString();
-  const lastError =
-    status === "error" ? "API rate limit exceeded — paused" : null;
-  const monthlySpend = Number(((hash % 5000) / 100).toFixed(2));
+export function useAgentStatus(agent: LibraryAgent): AgentStatusInfo {
+  const { data: executions } = useGetV1ListAllExecutions({
+    query: { select: okData },
+  });
 
-  return {
-    status,
-    health: deriveHealth(status, lastRunAt),
-    progress,
-    totalRuns,
-    lastRunAt,
-    lastError,
-    monthlySpend,
-    nextScheduledRun:
-      status === "scheduled"
-        ? new Date(Date.now() + 3600_000).toISOString()
-        : null,
-    triggerType: status === "listening" ? "webhook" : null,
-  };
+  return useMemo(() => {
+    const agentExecutions = (executions ?? []).filter(
+      (e) => e.graph_id === agent.graph_id,
+    );
+
+    const activeExec = agentExecutions.find((e) => isActive(e.status));
+
+    let status: AgentStatus;
+    let lastError: string | null = null;
+    let lastRunAt: string | null = null;
+
+    if (activeExec) {
+      status = "running";
+    } else {
+      const cutoff = Date.now() - SEVENTY_TWO_HOURS_MS;
+      const recentFailed = agentExecutions.find(
+        (e) =>
+          isFailed(e.status) &&
+          e.ended_at &&
+          new Date(
+            e.ended_at instanceof Date
+              ? e.ended_at.getTime()
+              : e.ended_at,
+          ).getTime() > cutoff,
+      );
+
+      if (recentFailed) {
+        status = "error";
+        lastError =
+          (recentFailed.stats?.error as string) ??
+          (recentFailed.stats?.activity_status as string) ??
+          "Execution failed";
+      } else if (agent.has_external_trigger) {
+        status = "listening";
+      } else if (agent.recommended_schedule_cron) {
+        status = "scheduled";
+      } else {
+        status = "idle";
+      }
+    }
+
+    const completedExecs = agentExecutions.filter(
+      (e) => e.ended_at,
+    );
+    if (completedExecs.length > 0) {
+      const sorted = completedExecs.sort((a, b) => {
+        const aTime = new Date(a.ended_at as string).getTime();
+        const bTime = new Date(b.ended_at as string).getTime();
+        return bTime - aTime;
+      });
+      lastRunAt = sorted[0].ended_at as string;
+    }
+
+    const totalRuns = agent.execution_count ?? agentExecutions.length;
+
+    return {
+      status,
+      health: deriveHealth(status, lastRunAt),
+      progress: null,
+      totalRuns,
+      lastRunAt,
+      lastError,
+      monthlySpend: 0,
+      nextScheduledRun: null,
+      triggerType: agent.has_external_trigger ? "webhook" : null,
+    };
+  }, [agent, executions]);
 }
 
-function simpleHash(str: string): number {
-  let h = 0;
-  for (let i = 0; i < str.length; i++) {
-    h = (h * 31 + str.charCodeAt(i)) >>> 0;
-  }
-  return h;
-}
+export function useFleetSummary(agents: LibraryAgent[]): FleetSummary {
+  const { data: executions } = useGetV1ListAllExecutions({
+    query: { select: okData },
+  });
 
-/**
- * Hook returning status info for a single agent.
- * TODO: Wire to `GET /agents/:id/status` + WebSocket `/agents/live`.
- */
-export function useAgentStatus(agentID: string): AgentStatusInfo {
-  // NOTE: useState initializer runs once on mount; a new agentID prop will not
-  // re-derive info. Replace with a real API call wired to the agentID param.
-  const [info] = useState(() => mockStatusForAgent(agentID));
-  return info;
-}
-
-/**
- * Hook returning fleet-wide summary counts.
- * TODO: Wire to `GET /agents/summary`.
- */
-export function useFleetSummary(agentIDs: string[]): FleetSummary {
-  const summary = useMemo<FleetSummary>(() => {
+  return useMemo(() => {
     const counts: FleetSummary = {
       running: 0,
       error: 0,
@@ -99,15 +130,46 @@ export function useFleetSummary(agentIDs: string[]): FleetSummary {
       idle: 0,
       monthlySpend: 0,
     };
-    for (const id of agentIDs) {
-      const info = mockStatusForAgent(id);
-      counts[info.status] += 1;
-      counts.monthlySpend += info.monthlySpend;
+
+    if (!executions) return counts;
+
+    const activeGraphIds = new Set<string>();
+    const errorGraphIds = new Set<string>();
+    const cutoff = Date.now() - SEVENTY_TWO_HOURS_MS;
+
+    for (const exec of executions) {
+      if (isActive(exec.status)) {
+        activeGraphIds.add(exec.graph_id);
+      }
+      if (
+        isFailed(exec.status) &&
+        exec.ended_at &&
+        new Date(
+          exec.ended_at instanceof Date
+            ? exec.ended_at.getTime()
+            : exec.ended_at,
+        ).getTime() > cutoff
+      ) {
+        errorGraphIds.add(exec.graph_id);
+      }
     }
-    counts.monthlySpend = Number(counts.monthlySpend.toFixed(2));
+
+    for (const agent of agents) {
+      if (activeGraphIds.has(agent.graph_id)) {
+        counts.running += 1;
+      } else if (errorGraphIds.has(agent.graph_id)) {
+        counts.error += 1;
+      } else if (agent.has_external_trigger) {
+        counts.listening += 1;
+      } else if (agent.recommended_schedule_cron) {
+        counts.scheduled += 1;
+      } else {
+        counts.idle += 1;
+      }
+    }
+
     return counts;
-  }, [agentIDs]);
-  return summary;
+  }, [agents, executions]);
 }
 
-export { mockStatusForAgent, deriveHealth };
+export { deriveHealth };

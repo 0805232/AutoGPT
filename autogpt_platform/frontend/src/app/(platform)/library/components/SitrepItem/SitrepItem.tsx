@@ -4,21 +4,33 @@ import { Text } from "@/components/atoms/Text/Text";
 import { Button } from "@/components/atoms/Button/Button";
 import {
   WarningCircleIcon,
-  PlayIcon,
   ClockCountdownIcon,
   CheckCircleIcon,
   ChatCircleDotsIcon,
+  EarIcon,
+  CalendarDotsIcon,
+  MoonIcon,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
+import { useRouter } from "next/navigation";
 import type { AgentStatus } from "../../types";
 import { ContextualActionButton } from "../ContextualActionButton/ContextualActionButton";
+import styles from "./SitrepItem.module.css";
 
-export type SitrepPriority = "error" | "running" | "stale" | "success";
+export type SitrepPriority =
+  | "error"
+  | "running"
+  | "stale"
+  | "success"
+  | "listening"
+  | "scheduled"
+  | "idle";
 
 export interface SitrepItemData {
   id: string;
   agentID: string;
   agentName: string;
+  agentImageUrl?: string | null;
   executionID?: string;
   priority: SitrepPriority;
   message: string;
@@ -27,12 +39,16 @@ export interface SitrepItemData {
 
 interface Props {
   item: SitrepItemData;
-  onAskAutoPilot?: (prompt: string) => void;
 }
 
 const PRIORITY_CONFIG: Record<
   SitrepPriority,
-  { icon: typeof WarningCircleIcon; color: string; bg: string }
+  {
+    icon?: typeof WarningCircleIcon;
+    color: string;
+    bg: string;
+    cssSpinner?: boolean;
+  }
 > = {
   error: {
     icon: WarningCircleIcon,
@@ -40,9 +56,9 @@ const PRIORITY_CONFIG: Record<
     bg: "bg-red-50",
   },
   running: {
-    icon: PlayIcon,
-    color: "text-blue-600",
-    bg: "bg-blue-50",
+    color: "text-zinc-800",
+    bg: "",
+    cssSpinner: true,
   },
   stale: {
     icon: ClockCountdownIcon,
@@ -54,42 +70,74 @@ const PRIORITY_CONFIG: Record<
     color: "text-green-600",
     bg: "bg-green-50",
   },
+  listening: {
+    icon: EarIcon,
+    color: "text-purple-500",
+    bg: "bg-purple-50",
+  },
+  scheduled: {
+    icon: CalendarDotsIcon,
+    color: "text-yellow-600",
+    bg: "bg-yellow-50",
+  },
+  idle: {
+    icon: MoonIcon,
+    color: "text-zinc-400",
+    bg: "bg-zinc-100",
+  },
 };
 
-export function SitrepItem({ item, onAskAutoPilot }: Props) {
+export function SitrepItem({ item }: Props) {
   const config = PRIORITY_CONFIG[item.priority];
-  const Icon = config.icon;
+  const router = useRouter();
 
   function handleAskAutoPilot() {
     const prompt = buildAutoPilotPrompt(item);
-    onAskAutoPilot?.(prompt);
+    const encoded = encodeURIComponent(prompt);
+    router.push(`/copilot?autosubmit=true#prompt=${encoded}`);
   }
 
   return (
     <div
       className={cn(
-        "group flex items-start gap-3 rounded-medium border border-transparent p-3 transition-colors hover:border-zinc-100 hover:bg-zinc-50/50",
+        "flex items-center gap-3 rounded-medium border border-zinc-100 bg-transparent p-2",
       )}
     >
-      <div
-        className={cn(
-          "mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full",
-          config.bg,
-        )}
-      >
-        <Icon size={14} className={config.color} weight="fill" />
-      </div>
+      {item.agentImageUrl ? (
+        <img
+          src={item.agentImageUrl}
+          alt={item.agentName}
+          className="h-6 w-6 flex-shrink-0 rounded-full object-cover"
+        />
+      ) : (
+        <div
+          className={cn(
+            "flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full",
+            config.bg,
+          )}
+        >
+          {config.cssSpinner ? (
+            <div
+              className={cn(styles.spinner, "h-[21px] w-[21px] text-zinc-800")}
+            />
+          ) : (
+            config.icon && (
+              <config.icon size={14} className={config.color} weight="fill" />
+            )
+          )}
+        </div>
+      )}
 
       <div className="min-w-0 flex-1">
-        <Text variant="body-medium" className="text-zinc-900">
+        <Text variant="body-medium" className="leading-tight text-zinc-900">
           {item.agentName}
         </Text>
-        <Text variant="small" className="mt-0.5 text-zinc-500">
+        <Text variant="small" className="leading-tight text-zinc-500">
           {item.message}
         </Text>
       </div>
 
-      <div className="flex flex-shrink-0 items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+      <div className="flex flex-shrink-0 items-center gap-1.5">
         <ContextualActionButton
           status={item.status}
           agentID={item.agentID}
@@ -100,7 +148,6 @@ export function SitrepItem({ item, onAskAutoPilot }: Props) {
           size="small"
           onClick={handleAskAutoPilot}
           leftIcon={<ChatCircleDotsIcon size={14} />}
-          className="text-xs"
         >
           Ask AutoPilot
         </Button>
@@ -119,5 +166,11 @@ function buildAutoPilotPrompt(item: SitrepItemData): string {
       return `${item.agentName} hasn't run recently. Should I keep it or update and re-run it?`;
     case "success":
       return `How has ${item.agentName} been performing? Give me a quick summary of recent results.`;
+    case "listening":
+      return `What is ${item.agentName} listening for? Give me a summary of its trigger configuration.`;
+    case "scheduled":
+      return `When is ${item.agentName} scheduled to run next?`;
+    case "idle":
+      return `${item.agentName} has been idle. Should I keep it or update and re-run it?`;
   }
 }

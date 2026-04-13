@@ -15,6 +15,7 @@ import {
 import { SuggestionThemes } from "./components/SuggestionThemes/SuggestionThemes";
 import { PulseChips } from "../PulseChips/PulseChips";
 import { usePulseChips } from "../PulseChips/usePulseChips";
+import { Flag, useGetFlag } from "@/services/feature-flags/use-get-flag";
 
 interface Props {
   inputLayoutId: string;
@@ -36,6 +37,7 @@ export function EmptySession({
 }: Props) {
   const { user } = useSupabase();
   const greetingName = getGreetingName(user);
+  const isAgentBriefingEnabled = useGetFlag(Flag.AGENT_BRIEFING);
   const pulseChips = usePulseChips();
 
   const { data: suggestedPromptsResponse, isLoading: isLoadingPrompts } =
@@ -83,7 +85,9 @@ export function EmptySession({
             Tell me about your work — I&apos;ll find what to automate.
           </Text>
 
-          <PulseChips chips={pulseChips} onChipClick={onSend} />
+          {isAgentBriefingEnabled && (
+            <PulseChips chips={pulseChips} onChipClick={onSend} />
+          )}
 
           <div className="mb-6">
             <motion.div

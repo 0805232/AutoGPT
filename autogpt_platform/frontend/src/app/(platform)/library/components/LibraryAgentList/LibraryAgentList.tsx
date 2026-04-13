@@ -134,7 +134,7 @@ export function LibraryAgentList({
 
   return (
     <>
-      {isAgentBriefingEnabled && !selectedFolderId && fleetSummary && (
+      {isAgentBriefingEnabled && !selectedFolderId && fleetSummary && allAgents.length > 0 && (
         <div className="mb-4">
           <AgentBriefingPanel
             summary={fleetSummary}

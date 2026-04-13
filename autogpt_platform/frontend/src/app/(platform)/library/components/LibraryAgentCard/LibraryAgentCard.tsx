@@ -1,18 +1,13 @@
 "use client";
 
 import { Text } from "@/components/atoms/Text/Text";
-import { CaretCircleRightIcon } from "@phosphor-icons/react";
+import { CaretCircleRightIcon, ChatCircleDotsIcon } from "@phosphor-icons/react";
 import Image from "next/image";
 import NextLink from "next/link";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 
 import { LibraryAgent } from "@/app/api/__generated__/models/libraryAgent";
-import Avatar, {
-  AvatarFallback,
-  AvatarImage,
-} from "@/components/atoms/Avatar/Avatar";
-import { Link } from "@/components/atoms/Link/Link";
-import { Progress } from "@/components/atoms/Progress/Progress";
 import { cn } from "@/lib/utils";
 import { AgentCardMenu } from "./components/AgentCardMenu";
 import { FavoriteButton } from "./components/FavoriteButton";
@@ -22,6 +17,11 @@ import { StatusBadge } from "../StatusBadge/StatusBadge";
 import { ContextualActionButton } from "../ContextualActionButton/ContextualActionButton";
 import { useAgentStatus } from "../../hooks/useAgentStatus";
 import { formatTimeAgo } from "../../helpers";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface Props {
   agent: LibraryAgent;
@@ -30,8 +30,9 @@ interface Props {
 
 export function LibraryAgentCard({ agent, draggable = true }: Props) {
   const { id, name, graph_id, can_access_graph, image_url } = agent;
+  const router = useRouter();
   const { triggerFavoriteAnimation } = useFavoriteAnimation();
-  const statusInfo = useAgentStatus(id);
+  const statusInfo = useAgentStatus(agent);
 
   function handleDragStart(e: React.DragEvent<HTMLDivElement>) {
     e.dataTransfer.setData("application/agent-id", id);
@@ -39,10 +40,7 @@ export function LibraryAgentCard({ agent, draggable = true }: Props) {
   }
 
   const {
-    isFromMarketplace,
     isFavorite,
-    profile,
-    creator_image_url,
     handleToggleFavorite,
   } = useLibraryAgentCard({
     agent,
@@ -52,7 +50,7 @@ export function LibraryAgentCard({ agent, draggable = true }: Props) {
   const hasError = statusInfo.status === "error";
   const isRunning = statusInfo.status === "running";
 
-  return (
+  const card = (
     <div
       draggable={draggable}
       onDragStart={handleDragStart}
@@ -65,7 +63,7 @@ export function LibraryAgentCard({ agent, draggable = true }: Props) {
         className={cn(
           "group relative inline-flex h-auto min-h-[10.625rem] w-full max-w-[25rem] flex-col items-start justify-start gap-2.5 rounded-medium border bg-white hover:shadow-md",
           hasError
-            ? "border-l-2 border-b-zinc-100 border-l-red-400 border-r-zinc-100 border-t-zinc-100"
+            ? "border-red-400"
             : "border-zinc-100",
         )}
         transition={{
@@ -76,25 +74,11 @@ export function LibraryAgentCard({ agent, draggable = true }: Props) {
         style={{ willChange: "transform" }}
       >
         <NextLink href={`/library/agents/${id}`} className="flex-shrink-0">
-          <div className="relative flex items-center gap-2 px-4 pt-3">
-            <Avatar className="h-4 w-4 rounded-full">
-              <AvatarImage
-                src={
-                  isFromMarketplace
-                    ? creator_image_url || "/avatar-placeholder.png"
-                    : profile?.avatar_url || "/avatar-placeholder.png"
-                }
-                alt={`${name} creator avatar`}
-              />
-              <AvatarFallback size={48}>{name.charAt(0)}</AvatarFallback>
-            </Avatar>
-            <Text
-              variant="small-medium"
-              className="uppercase tracking-wide text-zinc-400"
-            >
-              {isFromMarketplace ? "FROM MARKETPLACE" : "Built by you"}
+          <div className="relative flex items-center gap-3 pl-2 pr-4 pt-3">
+            <StatusBadge status={statusInfo.status} />
+            <Text variant="small" className="text-zinc-400">
+              {statusInfo.totalRuns} tasks
             </Text>
-            <StatusBadge status={statusInfo.status} className="ml-auto" />
           </div>
         </NextLink>
         <FavoriteButton
@@ -105,7 +89,7 @@ export function LibraryAgentCard({ agent, draggable = true }: Props) {
         <AgentCardMenu agent={agent} />
 
         <div className="flex w-full flex-1 flex-col px-4 pb-2">
-          <Link
+          <NextLink
             href={`/library/agents/${id}`}
             className="flex w-full items-start justify-between gap-2 no-underline hover:no-underline focus:ring-0"
           >
@@ -142,69 +126,53 @@ export function LibraryAgentCard({ agent, draggable = true }: Props) {
                 className="flex-shrink-0 rounded-small object-cover"
               />
             )}
-          </Link>
+          </NextLink>
 
-          {/* Status details: progress bar, error message, stats */}
-          {isRunning && statusInfo.progress !== null && (
-            <div className="mt-1 flex items-center gap-2">
-              <Progress value={statusInfo.progress} className="h-1.5 flex-1" />
-              <Text variant="small" className="text-blue-600">
-                {statusInfo.progress}%
-              </Text>
-            </div>
-          )}
 
-          {hasError && statusInfo.lastError && (
-            <Text variant="small" className="mt-1 line-clamp-1 text-red-500">
-              {statusInfo.lastError}
-            </Text>
-          )}
 
-          <div className="mt-1 flex items-center gap-3">
-            <Text variant="small" className="text-zinc-400">
-              {statusInfo.totalRuns} runs
-            </Text>
-            <Text variant="small" className="text-zinc-400">
-              ${statusInfo.monthlySpend}
-            </Text>
-            {statusInfo.lastRunAt && (
-              <Text variant="small" className="text-zinc-400">
-                {formatTimeAgo(statusInfo.lastRunAt)}
-              </Text>
-            )}
-          </div>
-
-          <div className="mt-auto flex w-full items-center justify-between gap-2 border-t border-zinc-100 pb-1 pt-3">
-            <div className="flex gap-6">
-              <Link
-                href={`/library/agents/${id}`}
-                data-testid="library-agent-card-see-runs-link"
-                className="flex items-center gap-1 text-[13px]"
-              >
-                See runs <CaretCircleRightIcon size={20} />
-              </Link>
-
-              {can_access_graph && (
-                <Link
-                  href={`/build?flowID=${graph_id}`}
-                  data-testid="library-agent-card-open-in-builder-link"
-                  className="flex items-center gap-1 text-[13px]"
-                  isExternal
-                >
-                  Open in builder <CaretCircleRightIcon size={20} />
-                </Link>
-              )}
-            </div>
-            <div className="opacity-0 transition-opacity group-hover:opacity-100">
-              <ContextualActionButton
-                status={statusInfo.status}
-                agentID={id}
-                className="text-xs"
-              />
-            </div>
+          <div className="mt-4 flex w-full items-center justify-end gap-1 border-t border-zinc-100 pb-0 pt-2">
+            <button
+              type="button"
+              onClick={() => router.push(`/library/agents/${id}`)}
+              data-testid="library-agent-card-see-runs-link"
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-[13px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 hover:text-zinc-800"
+            >
+              See tasks
+              <CaretCircleRightIcon size={14} className="shrink-0" />
+            </button>
+            <ContextualActionButton
+              status={statusInfo.status}
+              agentID={id}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const prompt = encodeURIComponent(
+                  `Tell me about ${name}, its current status, recent runs and how can I get the most out of it`,
+                );
+                router.push(`/copilot?autosubmit=true#prompt=${prompt}`);
+              }}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-[13px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 hover:text-zinc-800"
+            >
+              Chat
+              <ChatCircleDotsIcon size={14} className="shrink-0" />
+            </button>
           </div>
         </div>
       </motion.div>
     </div>
   );
+
+  if (hasError && statusInfo.lastError) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{card}</TooltipTrigger>
+        <TooltipContent className="max-w-xs text-red-600">
+          {statusInfo.lastError}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return card;
 }

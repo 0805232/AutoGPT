@@ -9,31 +9,31 @@ const STATUS_CONFIG: Record<
 > = {
   running: {
     label: "Running",
-    bg: "bg-blue-50",
+    bg: "",
     text: "text-blue-600",
     pulse: true,
   },
   error: {
     label: "Error",
-    bg: "bg-red-50",
+    bg: "",
     text: "text-red-500",
     pulse: false,
   },
   listening: {
     label: "Listening",
-    bg: "bg-purple-50",
+    bg: "",
     text: "text-purple-500",
     pulse: true,
   },
   scheduled: {
     label: "Scheduled",
-    bg: "bg-yellow-50",
+    bg: "",
     text: "text-yellow-600",
     pulse: false,
   },
   idle: {
     label: "Idle",
-    bg: "bg-zinc-100",
+    bg: "",
     text: "text-zinc-500",
     pulse: false,
   },
