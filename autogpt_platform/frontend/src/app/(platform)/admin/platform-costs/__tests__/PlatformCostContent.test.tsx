@@ -135,7 +135,8 @@ describe("PlatformCostContent", () => {
       expect(document.querySelector(".animate-pulse")).toBeNull(),
     );
     // Known Cost and Estimated Total cards render $0.0000
-    expect(screen.getByText("Known Cost")).toBeDefined();
+    // "Known Cost" appears in both the SummaryCard and the ProviderTable header
+    expect(screen.getAllByText("Known Cost").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Estimated Total")).toBeDefined();
     // All cost summary cards (Known Cost, Estimated Total, Avg Cost, P50/P75/P95/P99) show $0.0000
     const zeroCostItems = screen.getAllByText("$0.0000");
