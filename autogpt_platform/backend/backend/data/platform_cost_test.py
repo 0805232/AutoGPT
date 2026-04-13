@@ -324,6 +324,11 @@ class TestGetPlatformCostDashboard:
         assert dashboard.cost_p50_microdollars == 1000
         assert dashboard.cost_p95_microdollars == 4000
         assert len(dashboard.cost_buckets) == 1
+        # Token averages must use token_bearing_requests (3) not cost_bearing (0)
+        assert dashboard.avg_input_tokens_per_request == pytest.approx(1000 / 3)
+        assert dashboard.avg_output_tokens_per_request == pytest.approx(500 / 3)
+        # No cost_usd rows in total_agg → avg_cost should be 0
+        assert dashboard.avg_cost_microdollars_per_request == 0.0
 
     @pytest.mark.asyncio
     async def test_cache_tokens_aggregated_not_hardcoded(self):

@@ -12151,7 +12151,7 @@
           "cost_p75_microdollars": { "type": "number", "title": "Cost P75 Microdollars", "default": 0.0 },
           "cost_p95_microdollars": { "type": "number", "title": "Cost P95 Microdollars", "default": 0.0 },
           "cost_p99_microdollars": { "type": "number", "title": "Cost P99 Microdollars", "default": 0.0 },
-          "cost_buckets": { "type": "array", "items": { "type": "object" }, "title": "Cost Buckets", "default": [] }
+          "cost_buckets": { "type": "array", "items": { "type": "object", "properties": { "bucket": { "type": "string" }, "count": { "type": "integer" } }, "required": ["bucket", "count"] }, "title": "Cost Buckets", "default": [] }
         },
         "type": "object",
         "required": [

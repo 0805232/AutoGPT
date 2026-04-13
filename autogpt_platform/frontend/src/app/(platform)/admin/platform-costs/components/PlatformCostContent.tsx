@@ -8,6 +8,7 @@ import { ProviderTable } from "./ProviderTable";
 import { UserTable } from "./UserTable";
 import { LogsTable } from "./LogsTable";
 import { usePlatformCostContent } from "./usePlatformCostContent";
+import type { CostBucket } from "@/app/api/__generated__/models/platformCostDashboard";
 
 interface Props {
   searchParams: {
@@ -298,7 +299,7 @@ export function PlatformCostContent({ searchParams }: Props) {
                   </h3>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-6">
                     {dashboard.cost_buckets.map(
-                      (b: { bucket: string; count: number }) => (
+                      (b: CostBucket) => (
                         <div
                           key={b.bucket}
                           className="flex flex-col items-center rounded border p-2 text-center"

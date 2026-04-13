@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, TypedDict
 
 from prisma.models import PlatformCostLog as PrismaLog
 from prisma.models import User as PrismaUser
@@ -162,6 +162,11 @@ class CostLogRow(BaseModel):
     cache_creation_tokens: int | None = None
 
 
+class CostBucket(TypedDict):
+    bucket: str
+    count: int
+
+
 class PlatformCostDashboard(BaseModel):
     by_provider: list[ProviderCostSummary]
     by_user: list[UserCostSummary]
@@ -177,7 +182,7 @@ class PlatformCostDashboard(BaseModel):
     cost_p75_microdollars: float = 0.0
     cost_p95_microdollars: float = 0.0
     cost_p99_microdollars: float = 0.0
-    cost_buckets: list[dict] = []
+    cost_buckets: list[CostBucket] = []
 
 
 def _si(row: dict, field: str) -> int:
@@ -435,6 +440,11 @@ async def get_platform_cost_dashboard(
     cost_bearing_requests = sum(
         _ca(r) for r in total_agg_groups if r.get("trackingType") == "cost_usd"
     )
+    # Token-bearing request count: only rows where trackingType == "tokens".
+    # Token averages must use this denominator; cost_usd rows do not carry tokens.
+    token_bearing_requests = sum(
+        _ca(r) for r in total_agg_groups if r.get("trackingType") == "tokens"
+    )
 
     return PlatformCostDashboard(
         by_provider=[
@@ -470,13 +480,13 @@ async def get_platform_cost_dashboard(
         total_input_tokens=total_input_tokens,
         total_output_tokens=total_output_tokens,
         avg_input_tokens_per_request=(
-            total_input_tokens / cost_bearing_requests
-            if cost_bearing_requests > 0
+            total_input_tokens / token_bearing_requests
+            if token_bearing_requests > 0
             else 0.0
         ),
         avg_output_tokens_per_request=(
-            total_output_tokens / cost_bearing_requests
-            if cost_bearing_requests > 0
+            total_output_tokens / token_bearing_requests
+            if token_bearing_requests > 0
             else 0.0
         ),
         avg_cost_microdollars_per_request=(
