@@ -653,6 +653,53 @@ async def test_run_agent_schedule_credential_race_returns_setup_card(
 
 
 @pytest.mark.asyncio(loop_scope="session")
+async def test_run_agent_schedule_structural_error_returns_error_response(
+    setup_test_data,
+):
+    """End-to-end: if the scheduler raises a GraphValidationError with purely
+    structural (non-credential) errors after _check_prerequisites passed, the
+    tool must return an ErrorResponse with error='graph_validation_failed' —
+    not a setup_requirements card."""
+    user = setup_test_data["user"]
+    store_submission = setup_test_data["store_submission"]
+
+    tool = RunAgentTool()
+    agent_marketplace_id = f"{user.email.split('@')[0]}/{store_submission.slug}"
+    session = make_session(user_id=user.id)
+
+    fake_scheduler = AsyncMock()
+    fake_scheduler.add_execution_schedule.side_effect = GraphValidationError(
+        message="Graph is invalid",
+        node_errors={"some-node-id": {"url": "Input field 'url' is required"}},
+    )
+
+    with patch(
+        "backend.copilot.tools.run_agent.get_scheduler_client",
+        return_value=fake_scheduler,
+    ):
+        response = await tool.execute(
+            user_id=user.id,
+            session_id=str(uuid.uuid4()),
+            tool_call_id=str(uuid.uuid4()),
+            username_agent_slug=agent_marketplace_id,
+            inputs={"test_input": "value"},
+            schedule_name="My Schedule",
+            cron="0 9 * * *",
+            dry_run=False,
+            session=session,
+        )
+
+    assert response is not None
+    assert isinstance(response.output, str)
+    result_data = orjson.loads(response.output)
+
+    # Structural errors must fall through to the plain error path — the
+    # user should see the validation error, not the credential setup card.
+    assert result_data.get("error") == "graph_validation_failed"
+    assert result_data.get("type") != "setup_requirements"
+
+
+@pytest.mark.asyncio(loop_scope="session")
 async def test_run_agent_execution_credential_race_returns_setup_card(
     setup_test_data,
 ):
@@ -695,3 +742,48 @@ async def test_run_agent_execution_credential_race_returns_setup_card(
     assert result_data.get("type") == "setup_requirements"
     assert "setup_info" in result_data
     assert result_data["setup_info"]["user_readiness"]["ready_to_run"] is False
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_run_agent_execution_structural_error_returns_error_response(
+    setup_test_data,
+):
+    """End-to-end: if the executor raises a GraphValidationError with purely
+    structural (non-credential) errors after _check_prerequisites passed, the
+    tool must return an ErrorResponse with error='graph_validation_failed' —
+    not a setup_requirements card and not a silent swallow."""
+    user = setup_test_data["user"]
+    store_submission = setup_test_data["store_submission"]
+
+    tool = RunAgentTool()
+    agent_marketplace_id = f"{user.email.split('@')[0]}/{store_submission.slug}"
+    session = make_session(user_id=user.id)
+
+    with patch(
+        "backend.copilot.tools.run_agent.execution_utils.add_graph_execution",
+        new_callable=AsyncMock,
+        side_effect=GraphValidationError(
+            message="Graph is invalid",
+            node_errors={
+                "some-node-id": {"url": "Input field 'url' is required"},
+            },
+        ),
+    ):
+        response = await tool.execute(
+            user_id=user.id,
+            session_id=str(uuid.uuid4()),
+            tool_call_id=str(uuid.uuid4()),
+            username_agent_slug=agent_marketplace_id,
+            inputs={"test_input": "value"},
+            dry_run=False,
+            session=session,
+        )
+
+    assert response is not None
+    assert isinstance(response.output, str)
+    result_data = orjson.loads(response.output)
+
+    # Structural errors must fall through to the plain error path — the
+    # user should see the validation error, not the credential setup card.
+    assert result_data.get("error") == "graph_validation_failed"
+    assert result_data.get("type") != "setup_requirements"

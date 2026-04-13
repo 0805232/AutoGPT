@@ -108,7 +108,8 @@ class RunAgentTool(BaseTool):
     def description(self) -> str:
         return (
             "Run or schedule an agent. Automatically checks inputs and credentials "
-            "and surfaces the inline credentials-setup card if anything is missing. "
+            "and surfaces the inline credentials-setup card if anything is missing — "
+            "do NOT redirect to the Builder for credential setup. "
             "Identify by username_agent_slug ('user/agent') or library_agent_id. "
             "For scheduling, provide schedule_name + cron."
         )
@@ -396,10 +397,17 @@ class RunAgentTool(BaseTool):
         ):
             return None
 
-        # Show all credential fields as missing — in the race case the
+        # Show ALL credential fields as missing — in the race case the
         # previously-matched credentials have since become invalid, so
         # the user needs to reconnect all of them.  Passing ``None``
         # means no field is treated as "already connected".
+        #
+        # Trade-off: we could narrow to only the failing nodes in
+        # ``error.node_errors``, but we cannot trust the old credential
+        # mapping (those creds were valid at prereq time but are now
+        # gone/invalid), so showing all is safer than showing a partial
+        # list that might still contain broken entries.  The user sees
+        # every account that may need attention in a single card.
         credentials_dict = build_missing_credentials_from_graph(graph, None)
         return SetupRequirementsResponse(
             message=(
@@ -578,12 +586,15 @@ class RunAgentTool(BaseTool):
             # Reaching here means ``_check_prerequisites`` passed but the
             # executor's validator re-raised milliseconds later — surface
             # the race/drift so oncall can monitor how often this fires.
+            # Log only node IDs and field names — omit the error message
+            # text, which may contain credential IDs or provider details
+            # from the credential store (e.g. CredentialNotFoundError).
             logger.warning(
                 "Race: GraphValidationError from add_graph_execution after "
-                "prereq check passed (user_id=%s graph_id=%s node_errors=%s)",
+                "prereq check passed (user_id=%s graph_id=%s failing_fields=%s)",
                 user_id,
                 graph.id,
-                dict(e.node_errors),
+                {node_id: list(fields) for node_id, fields in e.node_errors.items()},
             )
             creds_setup = self._build_setup_requirements_from_validation_error(
                 graph=graph,
@@ -783,12 +794,15 @@ class RunAgentTool(BaseTool):
             # Reaching here means ``_check_prerequisites`` passed but the
             # scheduler's re-validation raised — surface the race/drift so
             # oncall can monitor how often this fires.
+            # Log only node IDs and field names — omit the error message
+            # text, which may contain credential IDs or provider details
+            # from the credential store (e.g. CredentialNotFoundError).
             logger.warning(
                 "Race: GraphValidationError from add_execution_schedule after "
-                "prereq check passed (user_id=%s graph_id=%s node_errors=%s)",
+                "prereq check passed (user_id=%s graph_id=%s failing_fields=%s)",
                 user_id,
                 graph.id,
-                dict(e.node_errors),
+                {node_id: list(fields) for node_id, fields in e.node_errors.items()},
             )
             creds_setup = self._build_setup_requirements_from_validation_error(
                 graph=graph,
