@@ -336,6 +336,20 @@ describe("deduplicateMessages", () => {
     expect(result).toHaveLength(4);
   });
 
+  it("keeps second answer when same question is asked twice in one session", () => {
+    // Regression: scoping by user message TEXT instead of ID would treat both
+    // turns as the same context and drop the second identical assistant reply.
+    const msgs = [
+      makeMsgWithId("u1", "user", "What is 2+2?"),
+      makeMsgWithId("a1", "assistant", "4"),
+      makeMsgWithId("u2", "user", "What is 2+2?"), // same question, different ID
+      makeMsgWithId("a2", "assistant", "4"), // same answer — must be kept
+    ];
+    const result = deduplicateMessages(msgs);
+    expect(result).toHaveLength(4);
+    expect(result.map((m) => m.id)).toEqual(["u1", "a1", "u2", "a2"]);
+  });
+
   it("removes adjacent assistant duplicates", () => {
     const msgs = [
       makeMsgWithId("u1", "user", "hello"),

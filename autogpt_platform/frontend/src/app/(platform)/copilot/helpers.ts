@@ -157,27 +157,29 @@ export function shouldSuppressDuplicateSend(
  * Deduplicate messages by ID and by content fingerprint.
  *
  * ID dedup catches exact duplicates within the same source.
- * Content dedup uses a composite key of `role + preceding-user-text +
+ * Content dedup uses a composite key of `role + preceding-user-message-id +
  * content-fingerprint` to detect replayed messages that arrive with new
  * IDs after an SSE reconnection replays from the beginning of the Redis
- * stream. The preceding-user-text component prevents false positives when
- * the assistant legitimately gives the same answer to different questions.
+ * stream. Scoping by user message ID (not text) preserves the second
+ * assistant reply when the user asks the same question twice and gets the
+ * same answer — two different user messages produce two different IDs even
+ * when their text is identical.
  */
 export function deduplicateMessages(messages: UIMessage[]): UIMessage[] {
   const seenIds = new Set<string>();
   const seenFingerprints = new Set<string>();
-  let lastUserText = "";
+  let lastUserMsgId = "";
 
   return messages.filter((msg) => {
     if (seenIds.has(msg.id)) return false;
     seenIds.add(msg.id);
 
     if (msg.role === "user") {
-      // Track the latest user message text so we can scope assistant
-      // fingerprints to their conversational context.
-      lastUserText = msg.parts
-        .map((p) => ("text" in p ? p.text : ""))
-        .join("|");
+      // Track the ID (not text) of the latest user message so we can scope
+      // assistant fingerprints to their conversational turn. Using the ID
+      // means two user messages with identical text are still treated as
+      // distinct turns, preventing false-positive deduplication.
+      lastUserMsgId = msg.id;
     }
 
     if (msg.role === "assistant") {
@@ -191,9 +193,9 @@ export function deduplicateMessages(messages: UIMessage[]): UIMessage[] {
         .join("|");
 
       if (contentFingerprint) {
-        // Scope to the preceding user message so that identical assistant
+        // Scope to the preceding user message turn so that identical assistant
         // replies to *different* user prompts are preserved.
-        const contextKey = `assistant:${lastUserText}:${contentFingerprint}`;
+        const contextKey = `assistant:${lastUserMsgId}:${contentFingerprint}`;
         if (seenFingerprints.has(contextKey)) return false;
         seenFingerprints.add(contextKey);
       }
