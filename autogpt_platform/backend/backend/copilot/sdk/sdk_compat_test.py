@@ -266,3 +266,21 @@ def test_sdk_exposes_cli_path_option():
         "Either find an alternative override mechanism or pin the SDK to a "
         "version that still exposes it."
     )
+
+
+def test_sdk_exposes_max_thinking_tokens_option():
+    """Sanity-check that the SDK still exposes the `max_thinking_tokens` option
+    we use to cap extended thinking cost.  If upstream removes or renames it
+    the cap will be silently ignored and Opus thinking tokens will be unbounded."""
+    import inspect
+
+    from claude_agent_sdk import ClaudeAgentOptions
+
+    sig = inspect.signature(ClaudeAgentOptions)
+    assert "max_thinking_tokens" in sig.parameters, (
+        "ClaudeAgentOptions no longer accepts `max_thinking_tokens` — our "
+        "claude_agent_max_thinking_tokens cost cap would be silently ignored, "
+        "allowing Opus extended thinking to generate unbounded tokens at $75/M. "
+        "Find the correct parameter name in the new SDK version and update "
+        "ChatConfig.claude_agent_max_thinking_tokens and service.py accordingly."
+    )

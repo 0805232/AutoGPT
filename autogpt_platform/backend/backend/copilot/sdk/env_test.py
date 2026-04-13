@@ -95,6 +95,7 @@ class TestBuildSdkEnvDirectAnthropic:
         assert "ANTHROPIC_API_KEY" not in result
         assert "ANTHROPIC_AUTH_TOKEN" not in result
         assert "ANTHROPIC_BASE_URL" not in result
+        assert result.get("CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS") == "1"
 
 
 # ---------------------------------------------------------------------------
