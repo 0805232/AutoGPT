@@ -98,26 +98,38 @@ class TestClaudeAgentCliPathEnvFallback:
     """
 
     def test_prefixed_env_var_is_picked_up(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
-        monkeypatch.setenv("CHAT_CLAUDE_AGENT_CLI_PATH", "/opt/claude-prefixed")
+        fake_cli = tmp_path / "fake-claude"
+        fake_cli.write_text("#!/bin/sh\n")
+        fake_cli.chmod(0o755)
+        monkeypatch.setenv("CHAT_CLAUDE_AGENT_CLI_PATH", str(fake_cli))
         cfg = ChatConfig()
-        assert cfg.claude_agent_cli_path == "/opt/claude-prefixed"
+        assert cfg.claude_agent_cli_path == str(fake_cli)
 
     def test_unprefixed_env_var_is_picked_up(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
-        monkeypatch.setenv("CLAUDE_AGENT_CLI_PATH", "/opt/claude-unprefixed")
+        fake_cli = tmp_path / "fake-claude"
+        fake_cli.write_text("#!/bin/sh\n")
+        fake_cli.chmod(0o755)
+        monkeypatch.setenv("CLAUDE_AGENT_CLI_PATH", str(fake_cli))
         cfg = ChatConfig()
-        assert cfg.claude_agent_cli_path == "/opt/claude-unprefixed"
+        assert cfg.claude_agent_cli_path == str(fake_cli)
 
     def test_prefixed_wins_over_unprefixed(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
-        monkeypatch.setenv("CHAT_CLAUDE_AGENT_CLI_PATH", "/opt/claude-prefixed")
-        monkeypatch.setenv("CLAUDE_AGENT_CLI_PATH", "/opt/claude-unprefixed")
+        prefixed_cli = tmp_path / "fake-claude-prefixed"
+        prefixed_cli.write_text("#!/bin/sh\n")
+        prefixed_cli.chmod(0o755)
+        unprefixed_cli = tmp_path / "fake-claude-unprefixed"
+        unprefixed_cli.write_text("#!/bin/sh\n")
+        unprefixed_cli.chmod(0o755)
+        monkeypatch.setenv("CHAT_CLAUDE_AGENT_CLI_PATH", str(prefixed_cli))
+        monkeypatch.setenv("CLAUDE_AGENT_CLI_PATH", str(unprefixed_cli))
         cfg = ChatConfig()
-        assert cfg.claude_agent_cli_path == "/opt/claude-prefixed"
+        assert cfg.claude_agent_cli_path == str(prefixed_cli)
 
     def test_no_env_var_defaults_to_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = ChatConfig()
