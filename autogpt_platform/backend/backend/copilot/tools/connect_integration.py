@@ -8,6 +8,7 @@ without configured credentials.
 
 from typing import Any, TypedDict
 
+from backend.copilot.integration_creds import get_provider_token
 from backend.copilot.model import ChatSession
 from backend.copilot.providers import SUPPORTED_PROVIDERS, get_provider_auth_types
 from backend.copilot.tools.models import (
@@ -56,11 +57,14 @@ class ConnectIntegrationTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Prompt the user to connect a required integration (e.g. GitHub). "
-            "Call this when an external CLI or API call fails because the user "
+            "Connect a required integration (e.g. GitHub). "
+            "If the user already has valid credentials the tool returns immediately "
+            "confirming the connection — no setup card is shown. "
+            "Only call this when an external CLI or API call fails because the user "
             "has not connected the relevant account. "
-            "The tool surfaces a credentials setup card in the chat so the user "
-            "can authenticate without leaving the page. "
+            "Do NOT call this proactively before attempting an operation — try the "
+            "operation first and only call connect_integration if it fails with an "
+            "authentication error. "
             "After the user connects the account, retry the operation. "
             "In E2B/cloud sandbox mode the token (GH_TOKEN/GITHUB_TOKEN) is "
             "automatically injected per-command in bash_exec — no manual export needed. "
@@ -129,7 +133,6 @@ class ConnectIntegrationTool(BaseTool):
 
         Returns an :class:`ErrorResponse` if *provider* is unknown.
         """
-        _ = user_id  # setup card is user-agnostic; auth is enforced via requires_auth
         session_id = session.session_id if session else None
         provider = (provider or "").strip().lower()
         reason = (reason or "").strip()[:500]  # cap LLM-controlled text
@@ -149,6 +152,19 @@ class ConnectIntegrationTool(BaseTool):
             )
 
         display_name: str = entry["name"]
+
+        if user_id:
+            token = await get_provider_token(user_id, provider)
+            if token:
+                return ToolResponseBase(
+                    type=ResponseType.SETUP_REQUIREMENTS,
+                    message=(
+                        f"{display_name} is already connected. "
+                        f"The token is automatically injected — "
+                        f"proceed with the operation."
+                    ),
+                    session_id=session_id,
+                )
         supported_types: list[str] = get_provider_auth_types(provider)
         # Merge agent-requested scopes with provider defaults (deduplicated, order preserved).
         default_scopes: list[str] = entry["default_scopes"]

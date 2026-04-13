@@ -56,6 +56,8 @@ from backend.copilot.service import (
     _get_openai_client,
     _update_title_async,
     config,
+    format_connected_integrations,
+    get_connected_integrations,
     inject_user_context,
     strip_user_context_tags,
 )
@@ -1075,16 +1077,32 @@ async def stream_chat_completion_baseline(
     user_message_for_transcript = message
     if should_inject_user_context:
         prefixed = await inject_user_context(
-            understanding, message or "", session_id, session.messages
+            understanding,
+            message or "",
+            session_id,
+            session.messages,
+            connected_integrations=(
+                await get_connected_integrations(user_id) if user_id else None
+            ),
         )
         if prefixed is not None:
             for msg in openai_messages:
                 if msg["role"] == "user":
                     msg["content"] = prefixed
                     break
-            user_message_for_transcript = prefixed
-        else:
-            logger.warning("[Baseline] No user message found for context injection")
+            if prefixed is not None:
+                # Persist the prefixed content so subsequent turns and --resume
+                # retain the user context.
+                for idx, session_msg in enumerate(session.messages):
+                    if session_msg.role == "user":
+                        session_msg.content = prefixed
+                        await update_message_content_by_sequence(
+                            session_id, idx, prefixed
+                        )
+                        break
+                user_message_for_transcript = prefixed
+            else:
+                logger.warning("[Baseline] No user message found for context injection")
 
     # Inject Graphiti warm context into the first user message (not the
     # system prompt) so the system prompt stays static and cacheable.

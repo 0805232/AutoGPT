@@ -83,6 +83,8 @@ from ..service import (
     _build_system_prompt,
     _is_langfuse_configured,
     _update_title_async,
+    format_connected_integrations,
+    get_connected_integrations,
     inject_user_context,
     strip_user_context_tags,
 )
@@ -3019,6 +3021,11 @@ async def stream_chat_completion_sdk(
                 session.messages,
                 warm_ctx=warm_ctx,
                 env_ctx=env_ctx_content,
+                connected_integrations=(
+                    await get_connected_integrations(user_id)
+                    if user_id
+                    else None
+                ),
             )
             if prefixed_message is not None:
                 current_message = prefixed_message

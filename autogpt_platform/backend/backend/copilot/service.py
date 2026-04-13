@@ -27,6 +27,7 @@ from backend.util.exceptions import NotAuthorizedError, NotFoundError
 from backend.util.settings import AppEnvironment, Settings
 
 from .config import ChatConfig
+from .integration_creds import get_provider_token
 from .model import (
     ChatMessage,
     ChatSessionInfo,
@@ -34,6 +35,7 @@ from .model import (
     update_session_title,
     upsert_chat_session,
 )
+from .providers import SUPPORTED_PROVIDERS
 
 logger = logging.getLogger(__name__)
 
@@ -349,6 +351,7 @@ async def inject_user_context(
     session_messages: list[ChatMessage],
     warm_ctx: str = "",
     env_ctx: str = "",
+    connected_integrations: list[str] | None = None,
 ) -> str | None:
     """Prepend trusted context blocks to the first user message.
 
@@ -430,6 +433,13 @@ async def inject_user_context(
             user_ctx = _sanitize_user_context_field(raw_ctx)
             final_message = format_user_context_prefix(user_ctx) + sanitized_message
 
+    # Append connected-integrations note so the LLM knows which credentials
+    # are already available and avoids re-prompting.
+    if connected_integrations:
+        integrations_note = format_connected_integrations(connected_integrations)
+        if integrations_note:
+            final_message = integrations_note + "\n\n" + final_message
+
     # Prepend environment context AFTER sanitization so the server-injected
     # block is never stripped by sanitize_user_supplied_context.
     if env_ctx:
@@ -464,6 +474,31 @@ async def inject_user_context(
                     )
             return final_message
     return None
+
+
+async def get_connected_integrations(user_id: str) -> list[str]:
+    """Return display names of integrations the user already has credentials for."""
+    connected: list[str] = []
+    for slug, entry in SUPPORTED_PROVIDERS.items():
+        try:
+            token = await get_provider_token(user_id, slug)
+            if token:
+                connected.append(entry["name"])
+        except Exception:
+            logger.debug("Failed to check %s credentials for user %s", slug, user_id)
+    return connected
+
+
+def format_connected_integrations(names: list[str]) -> str:
+    """Format a list of connected integration names for prompt injection."""
+    if not names:
+        return ""
+    joined = ", ".join(names)
+    return (
+        f"Connected integrations: {joined}. "
+        f"Tokens are automatically injected — do NOT call connect_integration "
+        f"for these providers unless an operation fails with an auth error."
+    )
 
 
 async def _generate_session_title(
