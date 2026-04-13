@@ -100,6 +100,11 @@ def build_sdk_env(
     # that OpenRouter rejects.  Safe for all modes — direct Anthropic ignores it.
     env["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] = "1"
 
+    # Trigger context compaction earlier — default is 70% of 200K = 140K.
+    # Set to 50% = 100K to keep context smaller and reduce cache creation costs.
+    # Context >200K accounts for 54% of total cost despite being only 3% of calls.
+    env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = "50"
+
     # Disable gzip on API responses to prevent ZlibError decompression
     # failures (see oven-sh/bun#23149, anthropics/claude-code#18302).
     # Appended to any existing ANTHROPIC_CUSTOM_HEADERS (OpenRouter mode
