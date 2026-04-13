@@ -273,22 +273,30 @@ export function PlatformCostContent({ searchParams }: Props) {
                   },
                   {
                     label: "Typical Cost (P50)",
-                    value: formatMicrodollars(dashboard.cost_p50_microdollars ?? 0),
+                    value: formatMicrodollars(
+                      dashboard.cost_p50_microdollars ?? 0,
+                    ),
                     subtitle: "Median cost per request",
                   },
                   {
                     label: "Upper Cost (P75)",
-                    value: formatMicrodollars(dashboard.cost_p75_microdollars ?? 0),
+                    value: formatMicrodollars(
+                      dashboard.cost_p75_microdollars ?? 0,
+                    ),
                     subtitle: "75th percentile cost",
                   },
                   {
                     label: "High Cost (P95)",
-                    value: formatMicrodollars(dashboard.cost_p95_microdollars ?? 0),
+                    value: formatMicrodollars(
+                      dashboard.cost_p95_microdollars ?? 0,
+                    ),
                     subtitle: "95th percentile cost",
                   },
                   {
                     label: "Peak Cost (P99)",
-                    value: formatMicrodollars(dashboard.cost_p99_microdollars ?? 0),
+                    value: formatMicrodollars(
+                      dashboard.cost_p99_microdollars ?? 0,
+                    ),
                     subtitle: "99th percentile cost",
                   },
                 ];
