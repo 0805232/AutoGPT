@@ -272,6 +272,14 @@ async def get_platform_cost_dashboard(
         start, end, provider, user_id, model, block_name, tracking_type
     )
 
+    # For per-user tracking-type breakdown we intentionally omit the
+    # tracking_type filter so cost_usd and tokens rows are always present.
+    # This ensures cost_bearing_request_count is correct even when the caller
+    # is filtering the main view by a different tracking_type.
+    where_no_tracking_type = _build_prisma_where(
+        start, end, provider, user_id, model, block_name, tracking_type=None
+    )
+
     sum_fields = {
         "costMicrodollars": True,
         "inputTokens": True,
@@ -352,9 +360,11 @@ async def get_platform_cost_dashboard(
         ),
         # Per-user cost-bearing request count: group by (userId, trackingType)
         # so we can compute the correct denominator for per-user avg cost.
+        # Uses where_no_tracking_type so cost_usd rows are always included
+        # even when the caller filters the main view by a different tracking_type.
         PrismaLog.prisma().group_by(
             by=["userId", "trackingType"],
-            where=where,
+            where=where_no_tracking_type,
             count=True,
         ),
         # Distinct user count: group by userId, count groups.
