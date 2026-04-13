@@ -119,9 +119,8 @@ async def lifespan_context(app: fastapi.FastAPI):
 
     AutoRegistry.patch_integrations()
 
-    # Load LLM registry before initializing blocks so blocks can use registry data.
-    # Tries Redis first (fast path on warm restart), falls back to DB.
-    # Note: Graceful fallback for now since no blocks consume registry yet (comes in PR #5)
+    _registry_subscription_task: asyncio.Task | None = None
+
     try:
         await backend.data.llm_registry.refresh_llm_registry()
         logger.info("LLM registry loaded successfully at startup")
@@ -131,8 +130,6 @@ async def lifespan_context(app: fastapi.FastAPI):
             "Blocks will initialize with empty registry."
         )
 
-    # Start background task so this worker reloads its in-process cache whenever
-    # another worker (e.g. the admin API) refreshes the registry.
     _registry_subscription_task = asyncio.create_task(
         backend.data.llm_registry.subscribe_to_registry_refresh(
             backend.data.llm_registry.refresh_llm_registry
@@ -146,28 +143,22 @@ async def lifespan_context(app: fastapi.FastAPI):
     try:
         await backend.data.graph.migrate_llm_models(DEFAULT_LLM_MODEL)
     except Exception as e:
-        err_str = str(e)
-        if "AgentNode" in err_str or "does not exist" in err_str:
-            logger.warning(
-                f"migrate_llm_models skipped: AgentNode table not found ({e}). "
-                "This is expected in test environments."
-            )
+        if "AgentNode" in str(e):
+            logger.warning("migrate_llm_models skipped: AgentNode table not found (%s)", e)
         else:
-            logger.error(
-                f"migrate_llm_models failed unexpectedly: {e}",
-                exc_info=True,
-            )
+            logger.error("migrate_llm_models failed unexpectedly: %s", e, exc_info=True)
 
     await backend.integrations.webhooks.utils.migrate_legacy_triggered_graphs()
 
     with launch_darkly_context():
         yield
 
-    _registry_subscription_task.cancel()
-    try:
-        await _registry_subscription_task
-    except asyncio.CancelledError:
-        pass
+    if _registry_subscription_task:
+        _registry_subscription_task.cancel()
+        try:
+            await _registry_subscription_task
+        except asyncio.CancelledError:
+            pass
 
     try:
         await shutdown_cloud_storage_handler()

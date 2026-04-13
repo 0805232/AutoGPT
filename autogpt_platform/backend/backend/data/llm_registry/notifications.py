@@ -6,6 +6,9 @@ import asyncio
 import logging
 from typing import Awaitable, Callable
 
+from backend.data.redis_client import HOST, PASSWORD, PORT
+from redis.asyncio import Redis as AsyncRedis
+
 logger = logging.getLogger(__name__)
 
 REGISTRY_REFRESH_CHANNEL = "llm_registry:refresh"
@@ -35,9 +38,6 @@ async def subscribe_to_registry_refresh(
         on_refresh: Async callable invoked on each refresh signal.
                     Typically ``llm_registry.refresh_llm_registry``.
     """
-    from backend.data.redis_client import HOST, PASSWORD, PORT
-    from redis.asyncio import Redis as AsyncRedis
-
     while True:
         try:
             # Dedicated connection — pub/sub must not share a connection used
