@@ -298,21 +298,19 @@ export function PlatformCostContent({ searchParams }: Props) {
                     Cost Distribution by Bucket
                   </h3>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-6">
-                    {dashboard.cost_buckets.map(
-                      (b: CostBucket) => (
-                        <div
-                          key={b.bucket}
-                          className="flex flex-col items-center rounded border p-2 text-center"
-                        >
-                          <span className="text-xs text-muted-foreground">
-                            {b.bucket}
-                          </span>
-                          <span className="text-lg font-semibold">
-                            {b.count.toLocaleString()}
-                          </span>
-                        </div>
-                      ),
-                    )}
+                    {dashboard.cost_buckets.map((b: CostBucket) => (
+                      <div
+                        key={b.bucket}
+                        className="flex flex-col items-center rounded border p-2 text-center"
+                      >
+                        <span className="text-xs text-muted-foreground">
+                          {b.bucket}
+                        </span>
+                        <span className="text-lg font-semibold">
+                          {b.count.toLocaleString()}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
