@@ -2331,6 +2331,9 @@ async def stream_chat_completion_sdk(
             # Thinking tokens are billed at output rate ($75/M for Opus) and
             # account for ~54% of total cost.  8192 is the default.
             "max_thinking_tokens": config.claude_agent_max_thinking_tokens,
+            # effort: controls thinking depth ('low'/'medium'/'high'/'max').
+            # 'low' minimizes thinking token usage — biggest cost lever.
+            "effort": config.claude_agent_thinking_effort,
         }
         if sdk_model:
             sdk_options_kwargs["model"] = sdk_model
