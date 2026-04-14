@@ -6053,9 +6053,9 @@
     "/api/platform-linking/chat/session": {
       "post": {
         "tags": ["platform-linking"],
-        "summary": "Create a CoPilot session for a server user (bot-facing)",
-        "description": "Creates a new CoPilot session on behalf of a platform user in a linked server.\nThe session is owned by the server owner's AutoGPT account.",
-        "operationId": "postPlatform-linkingCreate a copilot session for a server user (bot-facing)",
+        "summary": "Create a CoPilot session for a platform user (bot-facing)",
+        "description": "Create a new CoPilot session owned by the resolved AutoGPT account.",
+        "operationId": "postPlatform-linkingCreate a copilot session for a platform user (bot-facing)",
         "requestBody": {
           "content": {
             "application/json": {
@@ -6089,9 +6089,9 @@
     "/api/platform-linking/chat/stream": {
       "post": {
         "tags": ["platform-linking"],
-        "summary": "Stream a CoPilot response for a server user (bot-facing)",
-        "description": "Send a message to CoPilot on behalf of a platform user in a linked server,\nstreaming the response back as Server-Sent Events.\n\nThe bot authenticates with its API key — no user JWT required.\nThe owner's AutoGPT account is resolved from the server link.",
-        "operationId": "postPlatform-linkingStream a copilot response for a server user (bot-facing)",
+        "summary": "Stream a CoPilot response for a platform user (bot-facing)",
+        "description": "Send a message to CoPilot and stream the response as SSE.",
+        "operationId": "postPlatform-linkingStream a copilot response for a platform user (bot-facing)",
         "requestBody": {
           "content": {
             "application/json": {
@@ -6120,7 +6120,6 @@
       "get": {
         "tags": ["platform-linking"],
         "summary": "List all platform servers linked to the authenticated user",
-        "description": "Returns all platform servers where the current user is the owner.",
         "operationId": "getPlatform-linkingList all platform servers linked to the authenticated user",
         "responses": {
           "200": {
@@ -6146,7 +6145,6 @@
       "delete": {
         "tags": ["platform-linking"],
         "summary": "Unlink a platform server",
-        "description": "Removes a platform server link. The bot will stop working in that server\nuntil someone links it again.",
         "operationId": "deletePlatform-linkingUnlink a platform server",
         "security": [{ "HTTPBearerJWT": [] }],
         "parameters": [
@@ -6184,12 +6182,46 @@
       "post": {
         "tags": ["platform-linking"],
         "summary": "Check whether a platform server is linked",
-        "description": "Called by the bot on every incoming message to check whether the server\nhas a linked AutoGPT owner account.",
+        "description": "Called by the bot for every message in a server/group channel.",
         "operationId": "postPlatform-linkingCheck whether a platform server is linked",
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/ResolveRequest" }
+              "schema": { "$ref": "#/components/schemas/ResolveServerRequest" }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ResolveResponse" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/platform-linking/resolve-user": {
+      "post": {
+        "tags": ["platform-linking"],
+        "summary": "Check whether an individual's DMs are linked",
+        "description": "Called by the bot for every DM with an individual.",
+        "operationId": "postPlatform-linkingCheck whether an individual's dms are linked",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ResolveUserRequest" }
             }
           },
           "required": true
@@ -6217,9 +6249,9 @@
     "/api/platform-linking/tokens": {
       "post": {
         "tags": ["platform-linking"],
-        "summary": "Create a link token for an unlinked server",
-        "description": "Called by the bot when it receives a message from an unlinked server.\nGenerates a one-time token the triggering user can click to become the owner.",
-        "operationId": "postPlatform-linkingCreate a link token for an unlinked server",
+        "summary": "Create a SERVER link token for an unlinked server",
+        "description": "Bot creates a token to claim a server. First user to confirm becomes owner.",
+        "operationId": "postPlatform-linkingCreate a server link token for an unlinked server",
         "requestBody": {
           "content": {
             "application/json": {
@@ -6253,9 +6285,9 @@
     "/api/platform-linking/tokens/{token}/confirm": {
       "post": {
         "tags": ["platform-linking"],
-        "summary": "Confirm a link token (user must be authenticated)",
-        "description": "Called by the frontend when the user clicks the link and is logged in.\nAtomically consumes the token and creates the server → owner link.",
-        "operationId": "postPlatform-linkingConfirm a link token (user must be authenticated)",
+        "summary": "Confirm a SERVER link token (user must be authenticated)",
+        "description": "Frontend calls this after the user logs in and clicks 'Connect'.",
+        "operationId": "postPlatform-linkingConfirm a server link token (user must be authenticated)",
         "security": [{ "HTTPBearerJWT": [] }],
         "parameters": [
           {
@@ -6297,7 +6329,7 @@
       "get": {
         "tags": ["platform-linking"],
         "summary": "Get display info for a link token (no auth required)",
-        "description": "Returns non-sensitive display info (platform, server name) so the frontend\ncan show context before the user confirms. No auth required — the token has\n32 bytes of entropy and expires in 30 minutes.",
+        "description": "Display info for the frontend link page — platform, link type, server\nname if applicable. No auth: token has 32 bytes of entropy, 30-min TTL.",
         "operationId": "getPlatform-linkingGet display info for a link token (no auth required)",
         "parameters": [
           {
@@ -6338,7 +6370,7 @@
       "get": {
         "tags": ["platform-linking"],
         "summary": "Check if a link token has been consumed",
-        "description": "Called by the bot to check if a user has completed server linking.",
+        "description": "Bot polls to check if the user has completed linking.",
         "operationId": "getPlatform-linkingCheck if a link token has been consumed",
         "parameters": [
           {
@@ -6363,6 +6395,151 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/platform-linking/user-links": {
+      "get": {
+        "tags": ["platform-linking"],
+        "summary": "List all DM links for the authenticated user",
+        "operationId": "getPlatform-linkingList all dm links for the authenticated user",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PlatformUserLinkInfo"
+                  },
+                  "type": "array",
+                  "title": "Response Getplatform-Linkinglist All Dm Links For The Authenticated User"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/HTTP401NotAuthenticatedError"
+          }
+        },
+        "security": [{ "HTTPBearerJWT": [] }]
+      }
+    },
+    "/api/platform-linking/user-links/{link_id}": {
+      "delete": {
+        "tags": ["platform-linking"],
+        "summary": "Unlink a DM / user link",
+        "operationId": "deletePlatform-linkingUnlink a dm / user link",
+        "security": [{ "HTTPBearerJWT": [] }],
+        "parameters": [
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Link Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DeleteLinkResponse" }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/HTTP401NotAuthenticatedError"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/platform-linking/user-tokens": {
+      "post": {
+        "tags": ["platform-linking"],
+        "summary": "Create a USER link token for an unlinked DM user",
+        "description": "Bot creates a token for an individual to link their DMs with the bot.",
+        "operationId": "postPlatform-linkingCreate a user link token for an unlinked dm user",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserLinkTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LinkTokenResponse" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/platform-linking/user-tokens/{token}/confirm": {
+      "post": {
+        "tags": ["platform-linking"],
+        "summary": "Confirm a USER link token (user must be authenticated)",
+        "description": "Frontend calls this after the user logs in and clicks 'Connect' on a DM link.",
+        "operationId": "postPlatform-linkingConfirm a user link token (user must be authenticated)",
+        "security": [{ "HTTPBearerJWT": [] }],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfirmUserLinkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/HTTP401NotAuthenticatedError"
           },
           "422": {
             "description": "Validation Error",
@@ -9314,18 +9491,19 @@
         "properties": {
           "platform": { "$ref": "#/components/schemas/Platform" },
           "platform_server_id": {
-            "type": "string",
-            "maxLength": 255,
-            "minLength": 1,
+            "anyOf": [
+              { "type": "string", "maxLength": 255 },
+              { "type": "null" }
+            ],
             "title": "Platform Server Id",
-            "description": "Server/guild/group ID (used to resolve the owner)"
+            "description": "Server/guild/group ID — null for DM context"
           },
           "platform_user_id": {
             "type": "string",
             "maxLength": 255,
             "minLength": 1,
             "title": "Platform User Id",
-            "description": "Platform user ID of the person who sent the message (for per-user session keying)"
+            "description": "Platform user ID of the person who sent the message"
           },
           "message": {
             "type": "string",
@@ -9341,14 +9519,9 @@
           }
         },
         "type": "object",
-        "required": [
-          "platform",
-          "platform_server_id",
-          "platform_user_id",
-          "message"
-        ],
+        "required": ["platform", "platform_user_id", "message"],
         "title": "BotChatRequest",
-        "description": "Request from the bot to send a message on behalf of a server user.\n\nThe backend resolves the AutoGPT owner from platform_server_id internally —\nthe bot never handles AutoGPT user IDs directly."
+        "description": "Request from the bot to send a message on behalf of a platform user.\n\nExactly one of (platform_server_id) or () must resolve via context:\n  - SERVER context: both platform_server_id and platform_user_id set.\n    Billed to the server owner; per-user sessions.\n  - DM context: platform_server_id is null, platform_user_id set.\n    Billed to that user's own account."
       },
       "BotChatSessionResponse": {
         "properties": {
@@ -9489,6 +9662,10 @@
       "ConfirmLinkResponse": {
         "properties": {
           "success": { "type": "boolean", "title": "Success" },
+          "link_type": {
+            "$ref": "#/components/schemas/LinkType",
+            "default": "SERVER"
+          },
           "platform": { "type": "string", "title": "Platform" },
           "platform_server_id": {
             "type": "string",
@@ -9506,7 +9683,23 @@
           "platform_server_id",
           "server_name"
         ],
-        "title": "ConfirmLinkResponse"
+        "title": "ConfirmLinkResponse",
+        "description": "Server-link confirmation result. link_type is always SERVER here."
+      },
+      "ConfirmUserLinkResponse": {
+        "properties": {
+          "success": { "type": "boolean", "title": "Success" },
+          "link_type": {
+            "$ref": "#/components/schemas/LinkType",
+            "default": "USER"
+          },
+          "platform": { "type": "string", "title": "Platform" },
+          "platform_user_id": { "type": "string", "title": "Platform User Id" }
+        },
+        "type": "object",
+        "required": ["success", "platform", "platform_user_id"],
+        "title": "ConfirmUserLinkResponse",
+        "description": "User-link (DM) confirmation result."
       },
       "ContentType": {
         "type": "string",
@@ -9724,6 +9917,30 @@
         "required": ["id", "created_at", "user_id"],
         "title": "CreateSessionResponse",
         "description": "Response model containing information on a newly created chat session."
+      },
+      "CreateUserLinkTokenRequest": {
+        "properties": {
+          "platform": { "$ref": "#/components/schemas/Platform" },
+          "platform_user_id": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Platform User Id",
+            "description": "Platform user ID of the person linking their DMs"
+          },
+          "platform_username": {
+            "anyOf": [
+              { "type": "string", "maxLength": 255 },
+              { "type": "null" }
+            ],
+            "title": "Platform Username",
+            "description": "Their display name (best-effort for audit)"
+          }
+        },
+        "type": "object",
+        "required": ["platform", "platform_user_id"],
+        "title": "CreateUserLinkTokenRequest",
+        "description": "Request from the bot service to create a DM (user-level) linking token."
       },
       "CreatorDetails": {
         "properties": {
@@ -11695,13 +11912,14 @@
       "LinkTokenInfoResponse": {
         "properties": {
           "platform": { "type": "string", "title": "Platform" },
+          "link_type": { "$ref": "#/components/schemas/LinkType" },
           "server_name": {
             "anyOf": [{ "type": "string" }, { "type": "null" }],
             "title": "Server Name"
           }
         },
         "type": "object",
-        "required": ["platform", "server_name"],
+        "required": ["platform", "link_type"],
         "title": "LinkTokenInfoResponse",
         "description": "Non-sensitive display info for the frontend link page."
       },
@@ -11730,6 +11948,12 @@
         "type": "object",
         "required": ["status"],
         "title": "LinkTokenStatusResponse"
+      },
+      "LinkType": {
+        "type": "string",
+        "enum": ["SERVER", "USER"],
+        "title": "LinkType",
+        "description": "Whether a token/link targets a server (group chat) or a user (DM)."
       },
       "ListFilesResponse": {
         "properties": {
@@ -12718,6 +12942,31 @@
         ],
         "title": "PlatformLinkInfo"
       },
+      "PlatformUserLinkInfo": {
+        "properties": {
+          "id": { "type": "string", "title": "Id" },
+          "platform": { "type": "string", "title": "Platform" },
+          "platform_user_id": { "type": "string", "title": "Platform User Id" },
+          "platform_username": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Platform Username"
+          },
+          "linked_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Linked At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "platform",
+          "platform_user_id",
+          "platform_username",
+          "linked_at"
+        ],
+        "title": "PlatformUserLinkInfo"
+      },
       "PostmarkBounceEnum": {
         "type": "integer",
         "enum": [
@@ -13295,7 +13544,13 @@
         "required": ["credit_amount"],
         "title": "RequestTopUp"
       },
-      "ResolveRequest": {
+      "ResolveResponse": {
+        "properties": { "linked": { "type": "boolean", "title": "Linked" } },
+        "type": "object",
+        "required": ["linked"],
+        "title": "ResolveResponse"
+      },
+      "ResolveServerRequest": {
         "properties": {
           "platform": { "$ref": "#/components/schemas/Platform" },
           "platform_server_id": {
@@ -13304,26 +13559,28 @@
             "minLength": 1,
             "title": "Platform Server Id",
             "description": "Server/guild/group ID to look up"
-          },
-          "platform_user_id": {
-            "anyOf": [
-              { "type": "string", "maxLength": 255 },
-              { "type": "null" }
-            ],
-            "title": "Platform User Id",
-            "description": "DM fallback: if no server link found, check owner status"
           }
         },
         "type": "object",
         "required": ["platform", "platform_server_id"],
-        "title": "ResolveRequest",
-        "description": "Check whether a platform server is linked to an AutoGPT owner account.\n\nIn DM contexts there is no server — platform_user_id enables a fallback\nlookup: if no server link is found, check whether the user is already an\nowner of any linked server on this platform."
+        "title": "ResolveServerRequest",
+        "description": "Check whether a platform server is linked to an AutoGPT owner account."
       },
-      "ResolveResponse": {
-        "properties": { "linked": { "type": "boolean", "title": "Linked" } },
+      "ResolveUserRequest": {
+        "properties": {
+          "platform": { "$ref": "#/components/schemas/Platform" },
+          "platform_user_id": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Platform User Id",
+            "description": "Platform user ID to look up"
+          }
+        },
         "type": "object",
-        "required": ["linked"],
-        "title": "ResolveResponse"
+        "required": ["platform", "platform_user_id"],
+        "title": "ResolveUserRequest",
+        "description": "Check whether an individual platform user has linked their DMs."
       },
       "ResponseType": {
         "type": "string",

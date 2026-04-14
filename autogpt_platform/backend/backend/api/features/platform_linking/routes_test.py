@@ -13,8 +13,8 @@ from backend.api.features.platform_linking.models import (
     DeleteLinkResponse,
     LinkTokenStatusResponse,
     Platform,
-    ResolveRequest,
     ResolveResponse,
+    ResolveServerRequest,
 )
 
 
@@ -123,9 +123,9 @@ class TestCreateLinkTokenRequest:
             )
 
 
-class TestResolveRequest:
+class TestResolveServerRequest:
     def test_valid_request(self):
-        req = ResolveRequest(
+        req = ResolveServerRequest(
             platform=Platform.DISCORD,
             platform_server_id="1126875755960336515",
         )
@@ -136,14 +136,14 @@ class TestResolveRequest:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            ResolveRequest(
+            ResolveServerRequest(
                 platform=Platform.SLACK,
                 platform_server_id="",
             )
 
 
 class TestBotChatRequest:
-    def test_valid_request(self):
+    def test_server_context(self):
         req = BotChatRequest(
             platform=Platform.DISCORD,
             platform_server_id="1126875755960336515",
@@ -151,7 +151,16 @@ class TestBotChatRequest:
             message="Hello CoPilot!",
         )
         assert req.platform == Platform.DISCORD
+        assert req.platform_server_id == "1126875755960336515"
         assert req.session_id is None
+
+    def test_dm_context_omits_server_id(self):
+        req = BotChatRequest(
+            platform=Platform.DISCORD,
+            platform_user_id="353922987235213313",
+            message="Hello in DMs!",
+        )
+        assert req.platform_server_id is None
 
     def test_with_session_id(self):
         req = BotChatRequest(
@@ -172,6 +181,17 @@ class TestBotChatRequest:
                 platform_server_id="guild_123",
                 platform_user_id="user_456",
                 message="",
+            )
+
+    def test_empty_string_server_id_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            BotChatRequest(
+                platform=Platform.DISCORD,
+                platform_server_id="",
+                platform_user_id="user_456",
+                message="hi",
             )
 
 
@@ -227,7 +247,7 @@ class TestResolveEndpoint:
             new=AsyncMock(return_value=mock_link),
         ):
             result = await resolve_platform_server(
-                ResolveRequest(
+                ResolveServerRequest(
                     platform=Platform.DISCORD,
                     platform_server_id="guild_123",
                 ),
@@ -246,7 +266,7 @@ class TestResolveEndpoint:
             new=AsyncMock(return_value=None),
         ):
             result = await resolve_platform_server(
-                ResolveRequest(
+                ResolveServerRequest(
                     platform=Platform.DISCORD,
                     platform_server_id="guild_unknown",
                 ),
@@ -262,7 +282,7 @@ class TestResolveEndpoint:
 
         with pytest.raises(HTTPException) as exc_info:
             await resolve_platform_server(
-                ResolveRequest(
+                ResolveServerRequest(
                     platform=Platform.DISCORD,
                     platform_server_id="guild_123",
                 ),

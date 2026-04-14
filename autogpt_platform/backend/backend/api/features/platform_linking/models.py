@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Platform(str, Enum):
@@ -17,6 +17,13 @@ class Platform(str, Enum):
     WHATSAPP = "WHATSAPP"
     GITHUB = "GITHUB"
     LINEAR = "LINEAR"
+
+
+class LinkType(str, Enum):
+    """Whether a token/link targets a server (group chat) or a user (DM)."""
+
+    SERVER = "SERVER"
+    USER = "USER"
 
 
 # ── Request Models ─────────────────────────────────────────────────────
@@ -59,13 +66,24 @@ class CreateLinkTokenRequest(BaseModel):
     )
 
 
-class ResolveRequest(BaseModel):
-    """Check whether a platform server is linked to an AutoGPT owner account.
+class CreateUserLinkTokenRequest(BaseModel):
+    """Request from the bot service to create a DM (user-level) linking token."""
 
-    In DM contexts there is no server — platform_user_id enables a fallback
-    lookup: if no server link is found, check whether the user is already an
-    owner of any linked server on this platform.
-    """
+    platform: Platform
+    platform_user_id: str = Field(
+        description="Platform user ID of the person linking their DMs",
+        min_length=1,
+        max_length=255,
+    )
+    platform_username: str | None = Field(
+        default=None,
+        description="Their display name (best-effort for audit)",
+        max_length=255,
+    )
+
+
+class ResolveServerRequest(BaseModel):
+    """Check whether a platform server is linked to an AutoGPT owner account."""
 
     platform: Platform
     platform_server_id: str = Field(
@@ -73,29 +91,38 @@ class ResolveRequest(BaseModel):
         min_length=1,
         max_length=255,
     )
-    platform_user_id: str | None = Field(
-        default=None,
-        description="DM fallback: if no server link found, check owner status",
+
+
+class ResolveUserRequest(BaseModel):
+    """Check whether an individual platform user has linked their DMs."""
+
+    platform: Platform
+    platform_user_id: str = Field(
+        description="Platform user ID to look up",
+        min_length=1,
         max_length=255,
     )
 
 
 class BotChatRequest(BaseModel):
     """
-    Request from the bot to send a message on behalf of a server user.
+    Request from the bot to send a message on behalf of a platform user.
 
-    The backend resolves the AutoGPT owner from platform_server_id internally —
-    the bot never handles AutoGPT user IDs directly.
+    Exactly one of (platform_server_id) or () must resolve via context:
+      - SERVER context: both platform_server_id and platform_user_id set.
+        Billed to the server owner; per-user sessions.
+      - DM context: platform_server_id is null, platform_user_id set.
+        Billed to that user's own account.
     """
 
     platform: Platform
-    platform_server_id: str = Field(
-        description="Server/guild/group ID (used to resolve the owner)",
-        min_length=1,
+    platform_server_id: str | None = Field(
+        default=None,
+        description="Server/guild/group ID — null for DM context",
         max_length=255,
     )
     platform_user_id: str = Field(
-        description="Platform user ID of the person who sent the message (for per-user session keying)",
+        description="Platform user ID of the person who sent the message",
         min_length=1,
         max_length=255,
     )
@@ -106,6 +133,12 @@ class BotChatRequest(BaseModel):
         default=None,
         description="Existing CoPilot session ID. If omitted, a new session is created.",
     )
+
+    @model_validator(mode="after")
+    def _validate_server_id_length(self) -> "BotChatRequest":
+        if self.platform_server_id is not None and not self.platform_server_id:
+            raise ValueError("platform_server_id cannot be an empty string")
+        return self
 
 
 # ── Response Models ────────────────────────────────────────────────────
@@ -125,7 +158,8 @@ class LinkTokenInfoResponse(BaseModel):
     """Non-sensitive display info for the frontend link page."""
 
     platform: str
-    server_name: str | None
+    link_type: LinkType
+    server_name: str | None = None
 
 
 class ResolveResponse(BaseModel):
@@ -141,11 +175,31 @@ class PlatformLinkInfo(BaseModel):
     linked_at: datetime
 
 
+class PlatformUserLinkInfo(BaseModel):
+    id: str
+    platform: str
+    platform_user_id: str
+    platform_username: str | None
+    linked_at: datetime
+
+
 class ConfirmLinkResponse(BaseModel):
+    """Server-link confirmation result. link_type is always SERVER here."""
+
     success: bool
+    link_type: LinkType = LinkType.SERVER
     platform: str
     platform_server_id: str
     server_name: str | None
+
+
+class ConfirmUserLinkResponse(BaseModel):
+    """User-link (DM) confirmation result."""
+
+    success: bool
+    link_type: LinkType = LinkType.USER
+    platform: str
+    platform_user_id: str
 
 
 class DeleteLinkResponse(BaseModel):

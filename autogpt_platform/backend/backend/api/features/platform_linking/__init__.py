@@ -1,24 +1,32 @@
 # Platform bot linking API
 
-from prisma.models import PlatformLink
+from prisma.models import PlatformLink, PlatformUserLink
 
 
 async def find_server_link(
     platform: str,
     platform_server_id: str,
-    platform_user_id: str | None = None,
 ) -> PlatformLink | None:
-    """Look up the PlatformLink for a server, with DM fallback by owner user ID.
+    """Look up the PlatformLink for a server (group chat / guild).
 
-    In DM contexts there's no server. If `platform_user_id` is provided and no
-    server link exists, fall back to matching an existing server link owned by
-    that user — lets previously-linked owners skip re-auth in DMs.
+    Server and user (DM) links are independent — a user who owns a linked
+    server still has to link their DMs separately via a USER-type token.
     """
-    link = await PlatformLink.prisma().find_first(
+    return await PlatformLink.prisma().find_first(
         where={"platform": platform, "platformServerId": platform_server_id}
     )
-    if link is None and platform_user_id:
-        link = await PlatformLink.prisma().find_first(
-            where={"platform": platform, "ownerPlatformUserId": platform_user_id}
-        )
-    return link
+
+
+async def find_user_link(
+    platform: str,
+    platform_user_id: str,
+) -> PlatformUserLink | None:
+    """Look up the PlatformUserLink for an individual user's DMs with the bot."""
+    return await PlatformUserLink.prisma().find_unique(
+        where={
+            "platform_platformUserId": {
+                "platform": platform,
+                "platformUserId": platform_user_id,
+            }
+        }
+    )

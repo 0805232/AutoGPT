@@ -1,16 +1,18 @@
 """
 Bot Chat Proxy endpoints.
 
-Allows the bot service to send messages to CoPilot on behalf of a linked
-server's users, authenticated via bot API key.
+Allows the bot to stream AutoPilot (CoPilot) responses on behalf of a
+platform user, authenticated via bot API key. The bot never handles AutoGPT
+user IDs — it passes platform identifiers and the backend resolves the
+owning AutoGPT user internally. Prevents impersonation even if the bot
+API key is compromised.
 
-The bot never handles AutoGPT user IDs — it passes platform_server_id and
-platform_user_id, and the backend resolves the owner internally. This
-prevents impersonation even if the bot API key is compromised.
-
-Each (platform_server_id, platform_user_id) pair gets its own CoPilot
-session, all owned by the server owner's AutoGPT account. The owner can see
-all conversations in their AutoGPT account.
+Two resolution paths depending on context:
+  * SERVER context: request carries platform_server_id + platform_user_id.
+    Resolves via PlatformLink; billed to the server owner. Each
+    (server, user) pair gets its own session.
+  * DM (USER) context: request carries only platform_user_id.
+    Resolves via PlatformUserLink; billed to that user's own account.
 """
 
 import asyncio
@@ -30,7 +32,7 @@ from backend.copilot.model import (
 )
 from backend.copilot.response_model import StreamFinish
 
-from . import find_server_link
+from . import find_server_link, find_user_link
 from .auth import check_bot_api_key, get_bot_api_key
 from .models import BotChatRequest, BotChatSessionResponse
 
@@ -39,49 +41,54 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-async def _resolve_owner(
-    platform: str,
-    platform_server_id: str,
-    platform_user_id: str | None = None,
-) -> str:
-    """Return the AutoGPT owner user ID for a linked server, or 404."""
-    link = await find_server_link(platform, platform_server_id, platform_user_id)
-    if link is None:
+async def _resolve_owner(request: BotChatRequest) -> str:
+    """Return the AutoGPT user ID that should own this conversation's session.
+
+    - SERVER context (platform_server_id set): server owner.
+    - DM context (platform_server_id is None): the DM-linked user themselves.
+    Raises 404 if no matching link exists.
+    """
+    platform = request.platform.value
+
+    if request.platform_server_id:
+        link = await find_server_link(platform, request.platform_server_id)
+        if link is None:
+            raise HTTPException(
+                status_code=404,
+                detail="This server is not linked to an AutoGPT account.",
+            )
+        return link.userId
+
+    user_link = await find_user_link(platform, request.platform_user_id)
+    if user_link is None:
         raise HTTPException(
             status_code=404,
-            detail="This server is not linked to an AutoGPT account.",
+            detail="Your DMs are not linked to an AutoGPT account.",
         )
-    return link.userId
+    return user_link.userId
 
 
 @router.post(
     "/chat/session",
     response_model=BotChatSessionResponse,
-    summary="Create a CoPilot session for a server user (bot-facing)",
+    summary="Create a CoPilot session for a platform user (bot-facing)",
 )
 async def bot_create_session(
     request: BotChatRequest,
     x_bot_api_key: str | None = Depends(get_bot_api_key),
 ) -> BotChatSessionResponse:
-    """
-    Creates a new CoPilot session on behalf of a platform user in a linked server.
-    The session is owned by the server owner's AutoGPT account.
-    """
+    """Create a new CoPilot session owned by the resolved AutoGPT account."""
     check_bot_api_key(x_bot_api_key)
 
-    owner_user_id = await _resolve_owner(
-        request.platform.value,
-        request.platform_server_id,
-        request.platform_user_id,
-    )
+    owner_user_id = await _resolve_owner(request)
     session = await create_chat_session(owner_user_id, dry_run=False)
 
     logger.info(
-        "Bot created session %s for %s user %s in server %s (owner ...%s)",
+        "Bot created session %s for %s user %s (server %s, owner ...%s)",
         session.session_id,
         request.platform.value,
         request.platform_user_id,
-        request.platform_server_id,
+        request.platform_server_id or "DM",
         owner_user_id[-8:],
     )
 
@@ -90,28 +97,17 @@ async def bot_create_session(
 
 @router.post(
     "/chat/stream",
-    summary="Stream a CoPilot response for a server user (bot-facing)",
+    summary="Stream a CoPilot response for a platform user (bot-facing)",
 )
 async def bot_chat_stream(
     request: BotChatRequest,
     x_bot_api_key: str | None = Depends(get_bot_api_key),
 ):
-    """
-    Send a message to CoPilot on behalf of a platform user in a linked server,
-    streaming the response back as Server-Sent Events.
-
-    The bot authenticates with its API key — no user JWT required.
-    The owner's AutoGPT account is resolved from the server link.
-    """
+    """Send a message to CoPilot and stream the response as SSE."""
     check_bot_api_key(x_bot_api_key)
 
-    owner_user_id = await _resolve_owner(
-        request.platform.value,
-        request.platform_server_id,
-        request.platform_user_id,
-    )
+    owner_user_id = await _resolve_owner(request)
 
-    # Get or create session
     session_id = request.session_id
     if session_id:
         session = await get_chat_session(session_id, owner_user_id)
@@ -145,10 +141,10 @@ async def bot_chat_stream(
     )
 
     logger.info(
-        "Bot chat: %s server %s, user %s, session %s, turn %s (owner ...%s)",
+        "Bot chat: %s user %s, server %s, session %s, turn %s (owner ...%s)",
         request.platform.value,
-        request.platform_server_id,
         request.platform_user_id,
+        request.platform_server_id or "DM",
         session_id,
         turn_id,
         owner_user_id[-8:],
