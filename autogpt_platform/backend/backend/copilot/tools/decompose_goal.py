@@ -31,7 +31,9 @@ VALID_ACTIONS = {"add_block", "connect_blocks", "configure", "add_input", "add_o
 # checks the predicate and skips (the client's message is already there).
 AUTO_APPROVE_CLIENT_SECONDS = 60
 AUTO_APPROVE_SERVER_GRACE_SECONDS = 5
-AUTO_APPROVE_SERVER_SECONDS = AUTO_APPROVE_CLIENT_SECONDS + AUTO_APPROVE_SERVER_GRACE_SECONDS
+AUTO_APPROVE_SERVER_SECONDS = (
+    AUTO_APPROVE_CLIENT_SECONDS + AUTO_APPROVE_SERVER_GRACE_SECONDS
+)
 AUTO_APPROVE_MESSAGE = "Approved. Please build the agent."
 
 # Redis key prefix for cross-process cancel signalling. The cancel
