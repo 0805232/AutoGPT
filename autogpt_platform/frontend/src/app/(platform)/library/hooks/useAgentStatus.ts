@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { useGetV1ListAllExecutions } from "@/app/api/__generated__/endpoints/graphs/graphs";
+import { AgentExecutionStatus } from "@/app/api/__generated__/models/agentExecutionStatus";
 import type { GraphExecutionMeta } from "@/app/api/__generated__/models/graphExecutionMeta";
 import type { LibraryAgent } from "@/app/api/__generated__/models/libraryAgent";
 import { okData } from "@/app/api/helpers";
@@ -176,7 +177,10 @@ export function useFleetSummary(agents: LibraryAgent[]): FleetSummary {
         if (isFailed(exec.status) && endedTs > cutoff) {
           errorGraphIds.add(exec.graph_id);
         }
-        if (exec.status === "COMPLETED" && endedTs > cutoff) {
+        if (
+          exec.status === AgentExecutionStatus.COMPLETED &&
+          endedTs > cutoff
+        ) {
           completedGraphIds.add(exec.graph_id);
         }
       }
