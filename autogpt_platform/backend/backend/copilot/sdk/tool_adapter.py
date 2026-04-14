@@ -554,7 +554,13 @@ def _make_truncating_wrapper(
     """
 
     async def wrapper(args: dict[str, Any]) -> dict[str, Any]:
-        if not args and input_schema and input_schema.get("required"):
+        # Detect empty-args truncation: args is empty AND the schema declares
+        # at least one property (so a non-empty call was expected).
+        # NOTE: _build_input_schema intentionally omits "required" to avoid
+        # SDK-side validation rejecting truncated calls before reaching this
+        # handler.  We detect truncation via "properties" instead.
+        schema_has_params = bool(input_schema and input_schema.get("properties"))
+        if not args and schema_has_params:
             logger.warning(
                 "[MCP] %s called with empty args (likely output "
                 "token truncation) — returning guidance",

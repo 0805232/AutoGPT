@@ -308,7 +308,7 @@ async def _handle_read_file(args: dict[str, Any]) -> dict[str, Any]:
             raw: bytes = await sandbox.files.read(remote, format="bytes")
             content = raw.decode("utf-8", errors="replace")
         except Exception as exc:
-            return _mcp(f"Failed to read {remote}: {exc}", error=True)
+            return _mcp(f"Failed to read {os.path.basename(remote)}: {exc}", error=True)
 
         lines = content.splitlines(keepends=True)
         selected = list(itertools.islice(lines, offset, offset + limit))
@@ -382,7 +382,9 @@ async def _handle_write_file(args: dict[str, Any]) -> dict[str, Any]:
             remote = os.path.join(canonical_parent, os.path.basename(remote))
             await _sandbox_write(sandbox, remote, content)
         except Exception as exc:
-            return _mcp(f"Failed to write {remote}: {exc}", error=True)
+            return _mcp(
+                f"Failed to write {os.path.basename(remote)}: {exc}", error=True
+            )
 
         msg = f"Successfully wrote to {remote}"
         if len(content) > _LARGE_CONTENT_WARN_CHARS:
@@ -487,7 +489,7 @@ async def _handle_edit_file(args: dict[str, Any]) -> dict[str, Any]:
             raw = bytes(await sandbox.files.read(remote, format="bytes"))
             content = raw.decode("utf-8", errors="replace")
         except Exception as exc:
-            return _mcp(f"Failed to read {remote}: {exc}", error=True)
+            return _mcp(f"Failed to read {os.path.basename(remote)}: {exc}", error=True)
 
         count = content.count(old_string)
         if count == 0:
@@ -507,7 +509,9 @@ async def _handle_edit_file(args: dict[str, Any]) -> dict[str, Any]:
         try:
             await _sandbox_write(sandbox, remote, updated)
         except Exception as exc:
-            return _mcp(f"Failed to write {remote}: {exc}", error=True)
+            return _mcp(
+                f"Failed to write {os.path.basename(remote)}: {exc}", error=True
+            )
 
         return _mcp(f"Edited {remote} ({count} replacement{'s' if count > 1 else ''})")
 
