@@ -55,6 +55,7 @@ from backend.data.credit import (
     cancel_stripe_subscription,
     create_subscription_checkout,
     get_auto_top_up,
+    get_proration_credit_cents,
     get_subscription_price_id,
     get_user_credit_model,
     handle_subscription_payment_failure,
@@ -704,6 +705,7 @@ class SubscriptionStatusResponse(BaseModel):
     tier: Literal["FREE", "PRO", "BUSINESS", "ENTERPRISE"]
     monthly_cost: int  # amount in cents (Stripe convention)
     tier_costs: dict[str, int]  # tier name -> amount in cents
+    proration_credit_cents: int  # unused portion of current sub to convert on upgrade
 
 
 def _validate_checkout_redirect_url(url: str) -> bool:
@@ -798,10 +800,14 @@ async def get_subscription_status(
     for t, cost in zip(paid_tiers, costs):
         tier_costs[t.value] = cost
 
+    current_monthly_cost = tier_costs.get(tier.value, 0)
+    proration_credit = await get_proration_credit_cents(user_id, current_monthly_cost)
+
     return SubscriptionStatusResponse(
         tier=tier.value,
-        monthly_cost=tier_costs.get(tier.value, 0),
+        monthly_cost=current_monthly_cost,
         tier_costs=tier_costs,
+        proration_credit_cents=proration_credit,
     )
 
 

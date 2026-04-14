@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -1355,6 +1356,40 @@ async def cancel_stripe_subscription(user_id: str) -> None:
         raise
 
 
+async def get_proration_credit_cents(user_id: str, monthly_cost_cents: int) -> int:
+    """Return the prorated credit (in cents) the user would receive if they upgraded now.
+
+    Fetches the user's active Stripe subscription to determine how many seconds
+    remain in the current billing period, then calculates the unused portion of
+    the monthly cost. Returns 0 for FREE/ENTERPRISE users or when no active sub
+    is found.
+    """
+    if monthly_cost_cents <= 0:
+        return 0
+    try:
+        customer_id = await get_stripe_customer_id(user_id)
+        subscriptions = await run_in_threadpool(
+            stripe.Subscription.list, customer=customer_id, status="active", limit=1
+        )
+        if not subscriptions.data:
+            return 0
+        sub = subscriptions.data[0]
+        period_start: int = sub["current_period_start"]
+        period_end: int = sub["current_period_end"]
+        now = int(time.time())
+        total_seconds = period_end - period_start
+        remaining_seconds = max(period_end - now, 0)
+        if total_seconds <= 0:
+            return 0
+        return int(monthly_cost_cents * remaining_seconds / total_seconds)
+    except Exception:
+        logger.warning(
+            "get_proration_credit_cents: failed to compute proration for user %s",
+            user_id,
+        )
+        return 0
+
+
 async def get_auto_top_up(user_id: str) -> AutoTopUpConfig:
     user = await get_user_by_id(user_id)
 
@@ -1689,24 +1724,30 @@ async def handle_subscription_payment_failure(invoice: dict) -> None:
             sub_id,
         )
     except InsufficientBalanceError:
-        # Balance insufficient — cancel immediately and downgrade to FREE.
+        # Balance insufficient — cancel Stripe subscription first, then downgrade DB.
+        # Order matters: if we downgrade the DB first and the Stripe cancel fails, the
+        # user is permanently stuck on FREE while Stripe continues billing them.
+        # Cancelling Stripe first is safe: if the DB write then fails, the webhook
+        # customer.subscription.deleted will fire and correct the tier eventually.
         logger.info(
             "handle_subscription_payment_failure: insufficient balance for user %s;"
-            " downgrading to FREE and cancelling Stripe sub %s",
+            " cancelling Stripe sub %s then downgrading to FREE",
             user.id,
             sub_id,
         )
-        await set_subscription_tier(user.id, SubscriptionTier.FREE)
         try:
             await _cancel_customer_subscriptions(customer_id)
         except stripe.StripeError:
             logger.warning(
                 "handle_subscription_payment_failure: failed to cancel Stripe sub %s"
-                " for user %s (customer %s); Stripe may continue retrying",
+                " for user %s (customer %s); skipping tier downgrade to avoid"
+                " inconsistency — Stripe may continue retrying the invoice",
                 sub_id,
                 user.id,
                 customer_id,
             )
+            return
+        await set_subscription_tier(user.id, SubscriptionTier.FREE)
 
 
 async def admin_get_user_history(

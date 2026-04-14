@@ -21,6 +21,9 @@ export function useSubscriptionTierSection() {
   const pathname = usePathname();
   const { toast } = useToast();
   const [tierError, setTierError] = useState<string | null>(null);
+  const [pendingUpgradeTier, setPendingUpgradeTier] = useState<string | null>(
+    null,
+  );
 
   const {
     data: subscription,
@@ -97,7 +100,14 @@ export function useSubscriptionTierSection() {
       onConfirmDowngrade(targetTierKey);
       return;
     }
-    void changeTier(targetTierKey);
+    setPendingUpgradeTier(targetTierKey);
+  }
+
+  async function confirmUpgrade() {
+    if (!pendingUpgradeTier) return;
+    const tier = pendingUpgradeTier;
+    setPendingUpgradeTier(null);
+    await changeTier(tier);
   }
 
   const pendingTier =
@@ -110,6 +120,9 @@ export function useSubscriptionTierSection() {
     tierError,
     isPending,
     pendingTier,
+    pendingUpgradeTier,
+    setPendingUpgradeTier,
+    confirmUpgrade,
     isPaymentEnabled,
     changeTier,
     handleTierChange,

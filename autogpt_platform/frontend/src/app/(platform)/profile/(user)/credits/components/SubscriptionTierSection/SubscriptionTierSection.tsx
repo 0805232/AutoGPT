@@ -49,6 +49,9 @@ export function SubscriptionTierSection() {
     tierError,
     isPending,
     pendingTier,
+    pendingUpgradeTier,
+    setPendingUpgradeTier,
+    confirmUpgrade,
     isPaymentEnabled,
     changeTier,
     handleTierChange,
@@ -210,7 +213,7 @@ export function SubscriptionTierSection() {
         <Dialog.Content>
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
             {confirmDowngradeTo === "FREE"
-              ? "Downgrading to Free will cancel your current Stripe subscription immediately and remove your paid-tier rate limit increases."
+              ? "Downgrading to Free will schedule your subscription to cancel at the end of your current billing period. You keep your current plan until then."
               : `Switching to ${confirmDowngradeTo} will take effect immediately.`}{" "}
             Are you sure?
           </p>
@@ -226,6 +229,37 @@ export function SubscriptionTierSection() {
               onClick={() => void confirmDowngrade()}
             >
               Confirm Downgrade
+            </Button>
+          </Dialog.Footer>
+        </Dialog.Content>
+      </Dialog>
+
+      <Dialog
+        title="Confirm Upgrade"
+        controlled={{
+          isOpen: !!pendingUpgradeTier,
+          set: (open) => {
+            if (!open) setPendingUpgradeTier(null);
+          },
+        }}
+      >
+        <Dialog.Content>
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            {subscription &&
+              subscription.proration_credit_cents > 0 &&
+              `Your unused ${currentTier.charAt(0) + currentTier.slice(1).toLowerCase()} subscription ($${(subscription.proration_credit_cents / 100).toFixed(2)}) will be added to your account balance. `}
+            You will be redirected to Stripe to complete your upgrade to{" "}
+            {pendingUpgradeTier}.
+          </p>
+          <Dialog.Footer>
+            <Button
+              variant="outline"
+              onClick={() => setPendingUpgradeTier(null)}
+            >
+              Cancel
+            </Button>
+            <Button onClick={() => void confirmUpgrade()}>
+              Continue to Checkout
             </Button>
           </Dialog.Footer>
         </Dialog.Content>
