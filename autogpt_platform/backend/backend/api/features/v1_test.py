@@ -8,6 +8,7 @@ import fastapi.testclient
 import pytest
 import pytest_mock
 import starlette.datastructures
+from autogpt_libs.auth.models import RequestContext
 from fastapi import HTTPException, UploadFile
 from pytest_snapshot.plugin import Snapshot
 
@@ -15,6 +16,21 @@ from backend.data.credit import AutoTopUpConfig
 from backend.data.graph import GraphModel
 
 from .v1 import upload_file, v1_router
+
+
+def _test_ctx(user_id: str) -> RequestContext:
+    return RequestContext(
+        user_id=user_id,
+        org_id="test-org",
+        team_id="test-workspace",
+        is_org_owner=True,
+        is_org_admin=True,
+        is_org_billing_manager=False,
+        is_team_admin=True,
+        is_team_billing_manager=False,
+        seat_status="ACTIVE",
+    )
+
 
 app = fastapi.FastAPI()
 app.include_router(v1_router)
@@ -515,6 +531,7 @@ async def test_upload_file_success(test_user_id: str):
         result = await upload_file(
             file=upload_file_mock,
             user_id=test_user_id,
+            ctx=_test_ctx(test_user_id),
             expiration_hours=24,
         )
 
@@ -563,7 +580,9 @@ async def test_upload_file_no_filename(test_user_id: str):
 
         upload_file_mock.read = AsyncMock(return_value=file_content)
 
-        result = await upload_file(file=upload_file_mock, user_id=test_user_id)
+        result = await upload_file(
+            file=upload_file_mock, user_id=test_user_id, ctx=_test_ctx(test_user_id)
+        )
 
         assert result.file_name == "uploaded_file"
         assert result.content_type == "application/octet-stream"
@@ -585,7 +604,10 @@ async def test_upload_file_invalid_expiration(test_user_id: str):
     # Test expiration too short
     with pytest.raises(HTTPException) as exc_info:
         await upload_file(
-            file=upload_file_mock, user_id=test_user_id, expiration_hours=0
+            file=upload_file_mock,
+            user_id=test_user_id,
+            ctx=_test_ctx(test_user_id),
+            expiration_hours=0,
         )
     assert exc_info.value.status_code == 400
     assert "between 1 and 48" in exc_info.value.detail
@@ -593,7 +615,10 @@ async def test_upload_file_invalid_expiration(test_user_id: str):
     # Test expiration too long
     with pytest.raises(HTTPException) as exc_info:
         await upload_file(
-            file=upload_file_mock, user_id=test_user_id, expiration_hours=49
+            file=upload_file_mock,
+            user_id=test_user_id,
+            ctx=_test_ctx(test_user_id),
+            expiration_hours=49,
         )
     assert exc_info.value.status_code == 400
     assert "between 1 and 48" in exc_info.value.detail
@@ -617,7 +642,11 @@ async def test_upload_file_virus_scan_failure(test_user_id: str):
         upload_file_mock.read = AsyncMock(return_value=file_content)
 
         with pytest.raises(RuntimeError, match="Virus detected!"):
-            await upload_file(file=upload_file_mock, user_id=test_user_id)
+            await upload_file(
+                file=upload_file_mock,
+                user_id=test_user_id,
+                ctx=_test_ctx(test_user_id),
+            )
 
 
 @pytest.mark.asyncio
@@ -643,7 +672,11 @@ async def test_upload_file_cloud_storage_failure(test_user_id: str):
         upload_file_mock.read = AsyncMock(return_value=file_content)
 
         with pytest.raises(RuntimeError, match="Storage error!"):
-            await upload_file(file=upload_file_mock, user_id=test_user_id)
+            await upload_file(
+                file=upload_file_mock,
+                user_id=test_user_id,
+                ctx=_test_ctx(test_user_id),
+            )
 
 
 @pytest.mark.asyncio
@@ -661,7 +694,11 @@ async def test_upload_file_size_limit_exceeded(test_user_id: str):
     upload_file_mock.read = AsyncMock(return_value=large_file_content)
 
     with pytest.raises(HTTPException) as exc_info:
-        await upload_file(file=upload_file_mock, user_id=test_user_id)
+        await upload_file(
+            file=upload_file_mock,
+            user_id=test_user_id,
+            ctx=_test_ctx(test_user_id),
+        )
 
     assert exc_info.value.status_code == 400
     assert "exceeds the maximum allowed size of 256MB" in exc_info.value.detail
@@ -689,7 +726,11 @@ async def test_upload_file_gcs_not_configured_fallback(test_user_id: str):
 
         upload_file_mock.read = AsyncMock(return_value=file_content)
 
-        result = await upload_file(file=upload_file_mock, user_id=test_user_id)
+        result = await upload_file(
+            file=upload_file_mock,
+            user_id=test_user_id,
+            ctx=_test_ctx(test_user_id),
+        )
 
         # Verify fallback behavior
         assert result.file_name == "test.txt"

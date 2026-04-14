@@ -480,8 +480,21 @@ class AgentServer(backend.util.service.AppProcess):
         user_id: str,
         for_export: bool = False,
     ):
+        from autogpt_libs.auth.models import RequestContext
+
+        ctx = RequestContext(
+            user_id=user_id,
+            org_id="test-org",
+            team_id="test-workspace",
+            is_org_owner=True,
+            is_org_admin=True,
+            is_org_billing_manager=False,
+            is_team_admin=True,
+            is_team_billing_manager=False,
+            seat_status="ACTIVE",
+        )
         return await backend.api.features.v1.get_graph(
-            graph_id, user_id, graph_version, for_export
+            graph_id, user_id, ctx, graph_version, for_export
         )
 
     @staticmethod
@@ -520,10 +533,23 @@ class AgentServer(backend.util.service.AppProcess):
     @staticmethod
     async def test_delete_graph(graph_id: str, user_id: str):
         """Used for clean-up after a test run"""
+        from autogpt_libs.auth.models import RequestContext
+
         await backend.api.features.library.db.delete_library_agent_by_graph_id(
             graph_id=graph_id, user_id=user_id
         )
-        return await backend.api.features.v1.delete_graph(graph_id, user_id)
+        ctx = RequestContext(
+            user_id=user_id,
+            org_id="test-org",
+            team_id="test-workspace",
+            is_org_owner=True,
+            is_org_admin=True,
+            is_org_billing_manager=False,
+            is_team_admin=True,
+            is_team_billing_manager=False,
+            seat_status="ACTIVE",
+        )
+        return await backend.api.features.v1.delete_graph(graph_id, user_id, ctx)
 
     @staticmethod
     async def test_get_presets(user_id: str, page: int = 1, page_size: int = 10):
