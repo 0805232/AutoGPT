@@ -254,6 +254,13 @@ export function SidebarRunsList({
                   </div>
                 </div>
               )}
+              {triggers.length === 0 && triggerAgents.length === 0 && (
+                <div className="flex min-h-[50vh] flex-col items-center justify-center">
+                  <Text variant="large" className="text-zinc-700">
+                    No triggers set up
+                  </Text>
+                </div>
+              )}
             </div>
           </TabsLineContent>
         )}

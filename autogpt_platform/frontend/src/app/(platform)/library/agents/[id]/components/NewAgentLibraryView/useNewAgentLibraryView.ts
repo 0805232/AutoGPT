@@ -230,13 +230,10 @@ export function useNewAgentLibraryView() {
     onItemCreated({ item: newSchedule, type: "scheduled" });
   }
 
-  const isActiveItemTriggerAgent = useMemo(
-    () =>
-      activeTab === "triggers" &&
-      !!activeItem &&
-      !!triggerAgents?.some((t) => t.id === activeItem),
-    [activeTab, activeItem, triggerAgents],
-  );
+  const isActiveItemTriggerAgent =
+    activeTab === "triggers" &&
+    !!activeItem &&
+    !!triggerAgents?.some((t) => t.id === activeItem);
 
   return {
     agentId: id,

@@ -1925,6 +1925,7 @@ async def list_trigger_agents(
             "userId": user_id,
             "isHidden": True,
             "isDeleted": False,
+            "isArchived": False,
             "AgentGraph": {
                 "is": {
                     "Nodes": {
