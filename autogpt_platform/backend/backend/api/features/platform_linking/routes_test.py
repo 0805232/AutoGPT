@@ -33,12 +33,18 @@ class TestBotApiKeyAuth:
     @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": ""}, clear=False)
     @patch("backend.api.features.platform_linking.auth.Settings")
     def test_no_key_configured_allows_when_auth_disabled(self, mock_settings_cls):
+        from backend.api.features.platform_linking.auth import _auth_enabled
+
+        _auth_enabled.cache_clear()
         mock_settings_cls.return_value.config.enable_auth = False
         check_bot_api_key(None)
 
     @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": ""}, clear=False)
     @patch("backend.api.features.platform_linking.auth.Settings")
     def test_no_key_configured_rejects_when_auth_enabled(self, mock_settings_cls):
+        from backend.api.features.platform_linking.auth import _auth_enabled
+
+        _auth_enabled.cache_clear()
         mock_settings_cls.return_value.config.enable_auth = True
         with pytest.raises(HTTPException) as exc_info:
             check_bot_api_key(None)
@@ -217,11 +223,9 @@ class TestResolveEndpoint:
         mock_link.userId = "autogpt-user-123"
 
         with patch(
-            "backend.api.features.platform_linking.routes.PlatformLink"
-        ) as mock_model:
-            mock_model.prisma.return_value.find_first = AsyncMock(
-                return_value=mock_link
-            )
+            "backend.api.features.platform_linking.routes.find_server_link",
+            new=AsyncMock(return_value=mock_link),
+        ):
             result = await resolve_platform_server(
                 ResolveRequest(
                     platform=Platform.DISCORD,
@@ -238,9 +242,9 @@ class TestResolveEndpoint:
         from backend.api.features.platform_linking.routes import resolve_platform_server
 
         with patch(
-            "backend.api.features.platform_linking.routes.PlatformLink"
-        ) as mock_model:
-            mock_model.prisma.return_value.find_first = AsyncMock(return_value=None)
+            "backend.api.features.platform_linking.routes.find_server_link",
+            new=AsyncMock(return_value=None),
+        ):
             result = await resolve_platform_server(
                 ResolveRequest(
                     platform=Platform.DISCORD,
