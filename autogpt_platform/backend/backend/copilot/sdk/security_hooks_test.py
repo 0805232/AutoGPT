@@ -57,24 +57,35 @@ def test_unknown_tool_allowed():
 
 
 def test_read_within_workspace_allowed():
+    """Read is workspace-scoped — allowed within sdk_cwd for tool-results."""
     result = _validate_tool_access(
         "Read", {"file_path": f"{SDK_CWD}/file.txt"}, sdk_cwd=SDK_CWD
     )
     assert result == {}
 
 
-def test_write_within_workspace_allowed():
+def test_read_outside_workspace_blocked():
+    """Read outside the workspace is denied."""
+    result = _validate_tool_access(
+        "Read", {"file_path": "/etc/passwd"}, sdk_cwd=SDK_CWD
+    )
+    assert _is_denied(result)
+
+
+def test_write_builtin_blocked():
+    """SDK built-in Write is blocked — all writes go through MCP Write tool."""
     result = _validate_tool_access(
         "Write", {"file_path": f"{SDK_CWD}/output.json"}, sdk_cwd=SDK_CWD
     )
-    assert result == {}
+    assert _is_denied(result)
 
 
-def test_edit_within_workspace_allowed():
+def test_edit_builtin_blocked():
+    """SDK built-in Edit is blocked — all edits go through MCP Edit tool."""
     result = _validate_tool_access(
         "Edit", {"file_path": f"{SDK_CWD}/src/main.py"}, sdk_cwd=SDK_CWD
     )
-    assert result == {}
+    assert _is_denied(result)
 
 
 def test_glob_within_workspace_allowed():

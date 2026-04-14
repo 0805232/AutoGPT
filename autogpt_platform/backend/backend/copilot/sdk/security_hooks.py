@@ -101,6 +101,13 @@ def _validate_tool_access(
     Returns:
         Empty dict to allow, or dict with hookSpecificOutput to deny
     """
+    # Workspace-scoped tools: allowed only within the SDK workspace directory.
+    # Check this BEFORE the blocked-tools list because Read is blocked in
+    # general but must remain accessible for tool-results/tool-outputs paths
+    # that the SDK uses internally for oversized result handling.
+    if tool_name in WORKSPACE_SCOPED_TOOLS:
+        return _validate_workspace_path(tool_name, tool_input, sdk_cwd)
+
     # Block forbidden tools
     if tool_name in BLOCKED_TOOLS:
         logger.warning(f"Blocked tool access attempt: {tool_name}")
@@ -109,10 +116,6 @@ def _validate_tool_access(
             "This is enforced by the platform and cannot be bypassed. "
             "Use the CoPilot-specific MCP tools instead."
         )
-
-    # Workspace-scoped tools: allowed only within the SDK workspace directory
-    if tool_name in WORKSPACE_SCOPED_TOOLS:
-        return _validate_workspace_path(tool_name, tool_input, sdk_cwd)
 
     # Check for dangerous patterns in tool input
     # Use json.dumps for predictable format (str() produces Python repr)
