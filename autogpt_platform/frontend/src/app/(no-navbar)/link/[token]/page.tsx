@@ -22,12 +22,24 @@ const PLATFORM_NAMES: Record<string, string> = {
 // characters, bounded length. Keeps malformed params out of proxy fetches.
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
+type LinkType = "SERVER" | "USER";
+
 type LinkState =
   | { status: "loading" }
   | { status: "not-authenticated" }
-  | { status: "ready"; serverName: string | null; platform: string | null }
+  | {
+      status: "ready";
+      linkType: LinkType;
+      serverName: string | null;
+      platform: string | null;
+    }
   | { status: "linking" }
-  | { status: "success"; platform: string; serverName: string | null }
+  | {
+      status: "success";
+      linkType: LinkType;
+      platform: string;
+      serverName: string | null;
+    }
   | { status: "error"; message: string };
 
 export default function PlatformLinkPage() {
@@ -37,7 +49,6 @@ export default function PlatformLinkPage() {
   // Defense-in-depth: backend validates with the same regex, but reject
   // obviously-malformed tokens early so we never construct a bad proxy URL.
   const token = TOKEN_PATTERN.test(rawToken) ? rawToken : null;
-  // Quick fallback: platform may be in ?platform= query param (new links)
   const platformFromUrl =
     PLATFORM_NAMES[searchParams.get("platform")?.toUpperCase() ?? ""] ?? null;
   const { user, isUserLoading, logOut } = useSupabase();
@@ -59,21 +70,38 @@ export default function PlatformLinkPage() {
       return;
     }
 
-    // Show the page immediately with URL-param platform (may be null for old links),
-    // then fetch the real info from the backend which always has the correct platform.
-    setState({ status: "ready", serverName: null, platform: platformFromUrl });
+    // Show immediately with a reasonable default (SERVER) while we fetch the
+    // real token info — prevents UI flash. Old links without ?platform= just
+    // show "chat platform" until the info call lands.
+    setState({
+      status: "ready",
+      linkType: "SERVER",
+      serverName: null,
+      platform: platformFromUrl,
+    });
 
-    void fetchTokenInfo(token).then(({ platform, serverName }) => {
+    void fetchTokenInfo(token).then((info) => {
+      if (!info) return;
       setState((prev) =>
         prev.status === "ready"
-          ? { ...prev, platform: platform ?? prev.platform, serverName }
+          ? {
+              ...prev,
+              linkType: info.linkType,
+              platform: info.platform ?? prev.platform,
+              serverName: info.serverName,
+            }
           : prev,
       );
     });
   }, [token, user, isUserLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleLink() {
-    const serverName = state.status === "ready" ? state.serverName : null;
+    if (state.status !== "ready") return;
+    const { linkType, serverName } = state;
+    const endpoint =
+      linkType === "USER"
+        ? `/api/proxy/api/platform-linking/user-tokens/${token}/confirm`
+        : `/api/proxy/api/platform-linking/tokens/${token}/confirm`;
 
     setState({ status: "linking" });
 
@@ -81,15 +109,12 @@ export default function PlatformLinkPage() {
     const timeout = setTimeout(() => controller.abort(), 30_000);
 
     try {
-      const res = await fetch(
-        `/api/proxy/api/platform-linking/tokens/${token}/confirm`,
-        {
-          method: "POST",
-          body: JSON.stringify({}),
-          headers: { "Content-Type": "application/json" },
-          signal: controller.signal,
-        },
-      );
+      const res = await fetch(endpoint, {
+        method: "POST",
+        body: JSON.stringify({}),
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+      });
 
       if (!res.ok) {
         const data = await res.json().catch(() => null);
@@ -105,6 +130,7 @@ export default function PlatformLinkPage() {
       const data = await res.json();
       setState({
         status: "success",
+        linkType,
         platform:
           PLATFORM_NAMES[data.platform as string] ?? (data.platform as string),
         serverName: (data.server_name as string | null) ?? serverName,
@@ -138,6 +164,7 @@ export default function PlatformLinkPage() {
         <ReadyView
           onLink={handleLink}
           onSwitchAccount={handleSwitchAccount}
+          linkType={state.linkType}
           serverName={state.serverName}
           platform={state.platform}
           userEmail={user?.email ?? null}
@@ -145,7 +172,11 @@ export default function PlatformLinkPage() {
       )}
       {state.status === "linking" && <LinkingView />}
       {state.status === "success" && (
-        <SuccessView platform={state.platform} serverName={state.serverName} />
+        <SuccessView
+          linkType={state.linkType}
+          platform={state.platform}
+          serverName={state.serverName}
+        />
       )}
       {state.status === "error" && <ErrorView message={state.message} />}
 
@@ -156,26 +187,31 @@ export default function PlatformLinkPage() {
   );
 }
 
-async function fetchTokenInfo(
-  token: string,
-): Promise<{ platform: string | null; serverName: string | null }> {
+async function fetchTokenInfo(token: string): Promise<{
+  platform: string | null;
+  serverName: string | null;
+  linkType: LinkType;
+} | null> {
   try {
     const res = await fetch(
       `/api/proxy/api/platform-linking/tokens/${token}/info`,
       { signal: AbortSignal.timeout(5_000) },
     );
-    if (!res.ok) return { platform: null, serverName: null };
+    if (!res.ok) return null;
     const data = await res.json();
     const platform =
       PLATFORM_NAMES[
         (data.platform as string | undefined)?.toUpperCase() ?? ""
       ] ?? null;
+    const linkType: LinkType =
+      (data.link_type as LinkType | undefined) === "USER" ? "USER" : "SERVER";
     return {
       platform,
       serverName: (data.server_name as string | null) ?? null,
+      linkType,
     };
   } catch {
-    return { platform: null, serverName: null };
+    return null;
   }
 }
 
@@ -202,7 +238,7 @@ function NotAuthenticatedView({ token }: { token: string }) {
           variant="body-medium"
           className="text-center text-muted-foreground"
         >
-          Sign in to your AutoGPT account to set up AutoPilot for your server.
+          Sign in to your AutoGPT account to finish setting up AutoPilot.
         </Text>
         <Button as="NextLink" href={loginUrl} className="w-full">
           Sign in
@@ -219,25 +255,30 @@ function NotAuthenticatedView({ token }: { token: string }) {
 function ReadyView({
   onLink,
   onSwitchAccount,
+  linkType,
   serverName,
   platform,
   userEmail,
 }: {
   onLink: () => void;
   onSwitchAccount: () => void;
+  linkType: LinkType;
   serverName: string | null;
   platform: string | null;
   userEmail: string | null;
 }) {
-  // platformLabel is just the name ("Telegram", "Discord") — no "your" prefix
   const platformLabel = platform ?? "chat platform";
-  const isPersonal = !serverName;
-  const title = isPersonal
-    ? `Link your ${platformLabel} account`
-    : `Set up AutoPilot for ${serverName}`;
-  const contextLabel = isPersonal
-    ? `your ${platformLabel} account`
-    : (serverName ?? `this ${platformLabel} group`);
+  const isUserLink = linkType === "USER";
+
+  const title = isUserLink
+    ? `Link your ${platformLabel} DMs`
+    : serverName
+      ? `Set up AutoPilot for ${serverName}`
+      : `Set up AutoPilot for this ${platformLabel} server`;
+
+  const contextLabel = isUserLink
+    ? `your ${platformLabel} DMs`
+    : (serverName ?? `this ${platformLabel} server`);
 
   return (
     <AuthCard title={title}>
@@ -246,18 +287,20 @@ function ReadyView({
           <Text variant="body-medium" className="font-medium">
             What happens when you confirm:
           </Text>
-          {isPersonal ? (
+          {isUserLink ? (
             <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
               <li>{contextLabel} will be linked to your AutoGPT account</li>
-              <li>You can use AutoPilot directly from {platformLabel}</li>
-              <li>Your conversations appear in your AutoGPT account</li>
+              <li>DMs with the bot run as your personal AutoPilot</li>
+              <li>All usage from those DMs is billed to your account</li>
             </ul>
           ) : (
             <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
               <li>{contextLabel} will be connected to your AutoGPT account</li>
-              <li>Everyone in the group can chat with AutoPilot immediately</li>
+              <li>Everyone in the server can chat with AutoPilot</li>
               <li>Each person gets their own private conversation</li>
-              <li>All conversations appear in your AutoGPT account</li>
+              <li>
+                All usage from the server is billed to your AutoGPT account
+              </li>
             </ul>
           )}
         </div>
@@ -270,7 +313,9 @@ function ReadyView({
         </div>
 
         <Button onClick={onLink} className="w-full">
-          Connect {platformLabel} to AutoGPT
+          {isUserLink
+            ? `Connect my ${platformLabel} DMs`
+            : `Connect ${platformLabel} to AutoGPT`}
         </Button>
 
         {userEmail && (
@@ -297,7 +342,7 @@ function LinkingView() {
       <div className="flex flex-col items-center gap-4">
         <Spinner size={48} className="animate-spin text-primary" />
         <Text variant="body-medium" className="text-muted-foreground">
-          Setting up AutoPilot for your server...
+          Setting up AutoPilot...
         </Text>
       </div>
     </AuthCard>
@@ -305,13 +350,20 @@ function LinkingView() {
 }
 
 function SuccessView({
+  linkType,
   platform,
   serverName,
 }: {
+  linkType: LinkType;
   platform: string;
   serverName: string | null;
 }) {
-  const label = serverName ?? `your ${platform} server`;
+  const isUserLink = linkType === "USER";
+  const label =
+    isUserLink || !serverName ? `your ${platform} account` : serverName;
+  const detail = isUserLink
+    ? `You can now chat with AutoPilot in your ${platform} DMs.`
+    : `Everyone in the server can start using AutoPilot right away.`;
 
   return (
     <AuthCard title="AutoPilot is ready!">
@@ -325,7 +377,7 @@ function SuccessView({
         >
           <strong>{label}</strong> is now connected to your AutoGPT account.
           <br />
-          Everyone in the server can start using AutoPilot right away.
+          {detail}
         </Text>
         <Text variant="small" className="text-center text-muted-foreground">
           You can close this page and go back to your chat.
