@@ -3,12 +3,24 @@
 import hmac
 import logging
 import os
+from functools import lru_cache
 
 from fastapi import HTTPException, Request
 
 from backend.util.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _auth_enabled() -> bool:
+    """Cached read of Settings().config.enable_auth.
+
+    Called on every unauthenticated bot request — instantiating Settings each
+    time is expensive (reads env + pydantic validation). Auth-enabled doesn't
+    flip at runtime, so caching is safe.
+    """
+    return Settings().config.enable_auth
 
 
 async def get_bot_api_key(request: Request) -> str | None:
@@ -25,8 +37,7 @@ def check_bot_api_key(api_key: str | None) -> None:
     configured_key = os.getenv("PLATFORM_BOT_API_KEY", "")
 
     if not configured_key:
-        settings = Settings()
-        if settings.config.enable_auth:
+        if _auth_enabled():
             raise HTTPException(
                 status_code=503,
                 detail="Bot API key not configured.",

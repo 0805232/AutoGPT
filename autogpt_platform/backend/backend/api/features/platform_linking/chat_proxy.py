@@ -19,7 +19,6 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from prisma.models import PlatformLink
 
 from backend.copilot import stream_registry
 from backend.copilot.executor.utils import enqueue_copilot_turn
@@ -31,6 +30,7 @@ from backend.copilot.model import (
 )
 from backend.copilot.response_model import StreamFinish
 
+from . import find_server_link
 from .auth import check_bot_api_key, get_bot_api_key
 from .models import BotChatRequest, BotChatSessionResponse
 
@@ -44,21 +44,9 @@ async def _resolve_owner(
     platform_server_id: str,
     platform_user_id: str | None = None,
 ) -> str:
-    """
-    Look up the AutoGPT owner user ID for a linked server.
-    Falls back to owner lookup by user ID for DM contexts.
-    Raises 404 if neither the server nor the user is linked.
-    """
-    link = await PlatformLink.prisma().find_first(
-        where={"platform": platform, "platformServerId": platform_server_id}
-    )
-
-    if not link and platform_user_id:
-        link = await PlatformLink.prisma().find_first(
-            where={"platform": platform, "ownerPlatformUserId": platform_user_id}
-        )
-
-    if not link:
+    """Return the AutoGPT owner user ID for a linked server, or 404."""
+    link = await find_server_link(platform, platform_server_id, platform_user_id)
+    if link is None:
         raise HTTPException(
             status_code=404,
             detail="This server is not linked to an AutoGPT account.",

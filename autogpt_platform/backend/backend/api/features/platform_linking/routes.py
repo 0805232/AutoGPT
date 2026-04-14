@@ -26,6 +26,7 @@ from autogpt_libs import auth
 from fastapi import APIRouter, Depends, HTTPException, Path, Security
 from prisma.models import PlatformLink, PlatformLinkToken
 
+from . import find_server_link
 from .auth import check_bot_api_key, get_bot_api_key
 from .models import (
     ConfirmLinkResponse,
@@ -196,23 +197,11 @@ async def resolve_platform_server(
     """
     check_bot_api_key(x_bot_api_key)
 
-    platform = request.platform.value
-
-    link = await PlatformLink.prisma().find_first(
-        where={"platform": platform, "platformServerId": request.platform_server_id}
+    link = await find_server_link(
+        request.platform.value,
+        request.platform_server_id,
+        request.platform_user_id,
     )
-
-    # DM fallback: no server link found but a user ID was provided.
-    # Check whether this user is already an owner of any linked server on
-    # this platform — if so, they don't need to re-authenticate in a DM.
-    if not link and request.platform_user_id:
-        link = await PlatformLink.prisma().find_first(
-            where={
-                "platform": platform,
-                "ownerPlatformUserId": request.platform_user_id,
-            }
-        )
-
     return ResolveResponse(linked=link is not None)
 
 
