@@ -184,6 +184,15 @@ async def get_or_create_sandbox(
                 on_timeout=on_timeout,
                 auto_resume=on_timeout == "pause",
             )
+            # Note: asyncio.wait_for() only cancels the client-side wait;
+            # E2B may complete provisioning server-side after a timeout.
+            # Since AsyncSandbox.create() returns no sandbox_id before
+            # completion, recovery via connect() is not possible and each
+            # timed-out attempt may leak a sandbox.  Mitigations: E2B's
+            # on_timeout lifecycle action auto-pauses idle sandboxes (free)
+            # and the project-level "paused sandbox lifetime" (48 h) reaps
+            # orphans.  At most _SANDBOX_CREATE_MAX_RETRIES - 1 = 2 sandboxes
+            # can leak per incident.
             last_exc: Exception | None = None
             sandbox: AsyncSandbox | None = None
             for attempt in range(1, _SANDBOX_CREATE_MAX_RETRIES + 1):
