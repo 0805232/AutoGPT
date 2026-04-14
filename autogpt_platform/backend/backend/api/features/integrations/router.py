@@ -619,6 +619,11 @@ async def _prepare_scope_upgrade(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Credential provider does not match the requested provider",
         )
+    if existing.is_managed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Managed credentials cannot be upgraded",
+        )
 
     # Google handles scope merging via include_granted_scopes; others need
     # the union of existing + new scopes in the login URL.
@@ -681,6 +686,11 @@ async def _upgrade_existing_credential(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Credential to upgrade not found",
         )
+    if existing.is_managed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Managed credentials cannot be upgraded",
+        )
 
     if (
         existing.username
@@ -696,7 +706,10 @@ async def _upgrade_existing_credential(
     new_credentials.id = existing.id
     new_credentials.title = existing.title
     new_credentials.scopes = merged_scopes
-    new_credentials.metadata = {**existing.metadata, **(new_credentials.metadata or {})}
+    new_credentials.metadata = {
+        **(existing.metadata or {}),
+        **(new_credentials.metadata or {}),
+    }
     await creds_manager.update(user_id, new_credentials)
     return new_credentials
 

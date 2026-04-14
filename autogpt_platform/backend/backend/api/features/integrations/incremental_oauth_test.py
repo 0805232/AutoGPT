@@ -289,7 +289,11 @@ class TestIncrementalOAuthCallback:
             token="state-token",
             provider=provider,
             expires_at=9999999999,
-            scopes=scopes or ["https://www.googleapis.com/auth/calendar.readonly"],
+            scopes=(
+                scopes
+                if scopes is not None
+                else ["https://www.googleapis.com/auth/calendar.readonly"]
+            ),
             credential_id=credential_id,
         )
 
@@ -554,3 +558,124 @@ class TestIncrementalOAuthCallback:
         mock_mgr.update.assert_not_called()
         # Verify the implicit merge lookup was attempted
         mock_mgr.store.get_creds_by_provider.assert_called_once()
+
+
+# ==================== Round 2: Review feedback tests ==================== #
+
+
+class TestManagedCredentialProtection:
+    """Managed/system credentials must not be upgradeable."""
+
+    def test_login_rejects_managed_credential_id(self):
+        """Explicit credential_id pointing to a managed credential -> 400."""
+        managed = _make_google_oauth2_cred(cred_id="managed-1")
+        managed.is_managed = True
+        handler = MagicMock()
+
+        with (
+            patch(
+                "backend.api.features.integrations.router._get_provider_oauth_handler",
+                return_value=handler,
+            ),
+            patch("backend.api.features.integrations.router.creds_manager") as mock_mgr,
+        ):
+            mock_mgr.store.get_creds_by_id = AsyncMock(return_value=managed)
+
+            resp = client.get(
+                "/google/login",
+                params={
+                    "scopes": "https://www.googleapis.com/auth/calendar.readonly",
+                    "credential_id": "managed-1",
+                },
+            )
+
+        assert resp.status_code == 400
+
+    def test_callback_rejects_upgrade_of_managed_credential(self):
+        """Callback with credential_id for a managed credential -> 400."""
+        managed = _make_google_oauth2_cred(cred_id="managed-1")
+        managed.is_managed = True
+        new_cred = _make_google_oauth2_cred()
+        state = OAuthState(
+            token="state-token",
+            provider="google",
+            expires_at=9999999999,
+            scopes=["https://www.googleapis.com/auth/calendar.readonly"],
+            credential_id="managed-1",
+        )
+        handler = MagicMock()
+        handler.exchange_code_for_tokens = AsyncMock(return_value=new_cred)
+        handler.handle_default_scopes.return_value = state.scopes
+
+        with (
+            patch(
+                "backend.api.features.integrations.router._get_provider_oauth_handler",
+                return_value=handler,
+            ),
+            patch("backend.api.features.integrations.router.creds_manager") as mock_mgr,
+        ):
+            mock_mgr.store.verify_state_token = AsyncMock(return_value=state)
+            mock_mgr.store.get_creds_by_id = AsyncMock(return_value=managed)
+
+            resp = client.post(
+                "/google/callback",
+                json={"code": "auth-code", "state_token": "state-token"},
+            )
+
+        assert resp.status_code == 400
+
+
+class TestMetadataNoneGuard:
+    """Metadata merge must handle None values."""
+
+    def test_callback_upgrade_handles_none_metadata(self):
+        """Upgrading credential with metadata=None should not crash."""
+        existing = _make_google_oauth2_cred(
+            scopes=["https://www.googleapis.com/auth/gmail.readonly"]
+        )
+        existing.metadata = None  # type: ignore[assignment]
+        new_cred = _make_google_oauth2_cred(
+            scopes=[
+                "https://www.googleapis.com/auth/gmail.readonly",
+                "https://www.googleapis.com/auth/calendar.readonly",
+            ]
+        )
+        new_cred.metadata = None  # type: ignore[assignment]
+        state = OAuthState(
+            token="state-token",
+            provider="google",
+            expires_at=9999999999,
+            scopes=["https://www.googleapis.com/auth/calendar.readonly"],
+            credential_id="google-cred-1",
+        )
+        handler = MagicMock()
+        handler.exchange_code_for_tokens = AsyncMock(return_value=new_cred)
+        handler.handle_default_scopes.return_value = state.scopes
+
+        with (
+            patch(
+                "backend.api.features.integrations.router._get_provider_oauth_handler",
+                return_value=handler,
+            ),
+            patch("backend.api.features.integrations.router.creds_manager") as mock_mgr,
+        ):
+            mock_mgr.store.verify_state_token = AsyncMock(return_value=state)
+            mock_mgr.store.get_creds_by_id = AsyncMock(return_value=existing)
+            mock_mgr.update = AsyncMock()
+
+            resp = client.post(
+                "/google/callback",
+                json={"code": "auth-code", "state_token": "state-token"},
+            )
+
+        assert resp.status_code == 200
+
+
+class TestStateHelperScopesPattern:
+    """Test helper should handle empty scopes correctly."""
+
+    def test_make_state_preserves_empty_scopes(self):
+        """_make_state_with_credential_id([]) should keep empty list."""
+        state_maker = TestIncrementalOAuthCallback()
+        state = state_maker._make_state_with_credential_id("cred-1", scopes=[])
+        assert state.scopes == []
