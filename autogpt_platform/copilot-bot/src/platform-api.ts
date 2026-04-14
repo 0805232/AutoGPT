@@ -1,8 +1,12 @@
 /**
  * Client for the AutoGPT Platform Linking & Chat APIs.
  *
- * The bot never handles AutoGPT user IDs — it only passes platform server IDs
- * and platform user IDs. The backend resolves the owner internally.
+ * Two independent linking flows:
+ *   - SERVER: /resolve, /tokens, /tokens/{t}/status — claimed server context
+ *   - USER:   /resolve-user, /user-tokens — 1:1 DM context
+ *
+ * Chat endpoints (/chat/session, /chat/stream) accept either context — pass
+ * a serverId for server messages, omit for DMs.
  */
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -49,38 +53,30 @@ export class PlatformAPI {
     this.botApiKey = key;
   }
 
-  /**
-   * Check if a platform server is linked to an AutoGPT account.
-   * Pass platformUserId in DM contexts so the backend can fall back to
-   * owner lookup — prevents re-auth for users already linked via a server.
-   */
-  async resolve(
+  /** Check if a server has a PlatformLink (anyone in it can chat). */
+  async resolveServer(
     platform: string,
     platformServerId: string,
-    platformUserId?: string,
   ): Promise<ResolveResult> {
-    const res = await fetch(`${this.baseUrl}/api/platform-linking/resolve`, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify({
-        platform: platform.toUpperCase(),
-        platform_server_id: platformServerId,
-        platform_user_id: platformUserId,
-      }),
-      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+    return this.postJson("/api/platform-linking/resolve", {
+      platform: platform.toUpperCase(),
+      platform_server_id: platformServerId,
     });
+  }
 
-    if (!res.ok) {
-      throw new PlatformAPIError(res.status, await res.text());
-    }
-
-    return res.json();
+  /** Check if an individual has a PlatformUserLink (their DMs are linked). */
+  async resolveUser(
+    platform: string,
+    platformUserId: string,
+  ): Promise<ResolveResult> {
+    return this.postJson("/api/platform-linking/resolve-user", {
+      platform: platform.toUpperCase(),
+      platform_user_id: platformUserId,
+    });
   }
 
   /**
-   * Create a link token for an unlinked server.
-   * platform_user_id is the person who triggered the interaction —
-   * they become the server owner when they confirm.
+   * Create a SERVER link token. platformUserId is the user claiming ownership.
    */
   async createLinkToken(params: {
     platform: string;
@@ -90,28 +86,30 @@ export class PlatformAPI {
     serverName?: string;
     channelId?: string;
   }): Promise<LinkTokenResult> {
-    const res = await fetch(`${this.baseUrl}/api/platform-linking/tokens`, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify({
-        platform: params.platform.toUpperCase(),
-        platform_server_id: params.platformServerId,
-        platform_user_id: params.platformUserId,
-        platform_username: params.platformUsername,
-        server_name: params.serverName,
-        channel_id: params.channelId,
-      }),
-      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+    return this.postJson("/api/platform-linking/tokens", {
+      platform: params.platform.toUpperCase(),
+      platform_server_id: params.platformServerId,
+      platform_user_id: params.platformUserId,
+      platform_username: params.platformUsername,
+      server_name: params.serverName,
+      channel_id: params.channelId,
     });
-
-    if (!res.ok) {
-      throw new PlatformAPIError(res.status, await res.text());
-    }
-
-    return res.json();
   }
 
-  /** Check if a link token has been consumed (user completed linking). */
+  /** Create a USER (DM) link token for an individual. */
+  async createUserLinkToken(params: {
+    platform: string;
+    platformUserId: string;
+    platformUsername?: string;
+  }): Promise<LinkTokenResult> {
+    return this.postJson("/api/platform-linking/user-tokens", {
+      platform: params.platform.toUpperCase(),
+      platform_user_id: params.platformUserId,
+      platform_username: params.platformUsername,
+    });
+  }
+
+  /** Check if a link token has been consumed. Works for both SERVER and USER tokens. */
   async getLinkTokenStatus(token: string): Promise<LinkTokenStatus> {
     const res = await fetch(
       `${this.baseUrl}/api/platform-linking/tokens/${encodeURIComponent(token)}/status`,
@@ -120,57 +118,42 @@ export class PlatformAPI {
         signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
       },
     );
-
-    if (!res.ok) {
-      throw new PlatformAPIError(res.status, await res.text());
-    }
-
+    if (!res.ok) throw new PlatformAPIError(res.status, await res.text());
     return res.json();
   }
 
   /**
-   * Create a new CoPilot session for a user in a linked server.
-   * The session is owned by the server owner's AutoGPT account.
+   * Create a new CoPilot session. Pass `platformServerId` for server context
+   * (session owned by server owner); omit for DM context (owned by the user).
    */
-  async createChatSession(
-    platform: string,
-    platformServerId: string,
-    platformUserId: string,
-  ): Promise<string> {
-    const res = await fetch(
-      `${this.baseUrl}/api/platform-linking/chat/session`,
+  async createChatSession(params: {
+    platform: string;
+    platformUserId: string;
+    platformServerId?: string;
+  }): Promise<string> {
+    const data = await this.postJson<{ session_id: string }>(
+      "/api/platform-linking/chat/session",
       {
-        method: "POST",
-        headers: this.headers(),
-        body: JSON.stringify({
-          platform: platform.toUpperCase(),
-          platform_server_id: platformServerId,
-          platform_user_id: platformUserId,
-          message: "session_init",
-        }),
-        signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+        platform: params.platform.toUpperCase(),
+        platform_server_id: params.platformServerId,
+        platform_user_id: params.platformUserId,
+        message: "session_init",
       },
     );
-
-    if (!res.ok) {
-      throw new PlatformAPIError(res.status, await res.text());
-    }
-
-    const data = await res.json();
-    return data.session_id as string;
+    return data.session_id;
   }
 
   /**
-   * Stream a chat message to CoPilot on behalf of a user in a linked server.
-   * Yields text chunks from the SSE stream.
+   * Stream a chat message. Same context rules as createChatSession —
+   * include platformServerId for server messages, omit for DMs.
    */
-  async *streamChat(
-    platform: string,
-    platformServerId: string,
-    platformUserId: string,
-    message: string,
-    sessionId?: string,
-  ): AsyncGenerator<string> {
+  async *streamChat(params: {
+    platform: string;
+    platformUserId: string;
+    platformServerId?: string;
+    message: string;
+    sessionId?: string;
+  }): AsyncGenerator<string> {
     const abort = new AbortController();
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     const resetIdleTimer = () => {
@@ -185,11 +168,11 @@ export class PlatformAPI {
         method: "POST",
         headers: { ...this.headers(), Accept: "text/event-stream" },
         body: JSON.stringify({
-          platform: platform.toUpperCase(),
-          platform_server_id: platformServerId,
-          platform_user_id: platformUserId,
-          message,
-          session_id: sessionId,
+          platform: params.platform.toUpperCase(),
+          platform_server_id: params.platformServerId,
+          platform_user_id: params.platformUserId,
+          message: params.message,
+          session_id: params.sessionId,
         }),
         signal: abort.signal,
       });
@@ -202,7 +185,6 @@ export class PlatformAPI {
       if (idleTimer) clearTimeout(idleTimer);
       throw new PlatformAPIError(res.status, await res.text());
     }
-
     if (!res.body) {
       if (idleTimer) clearTimeout(idleTimer);
       throw new PlatformAPIError(0, "No response body for SSE stream");
@@ -224,10 +206,8 @@ export class PlatformAPI {
 
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
-
           const data = line.slice(6).trim();
           if (data === "[DONE]") return;
-
           try {
             const parsed = JSON.parse(data) as Record<string, unknown>;
             if (parsed.type === "text-delta" && parsed.delta) {
@@ -244,6 +224,20 @@ export class PlatformAPI {
       if (idleTimer) clearTimeout(idleTimer);
       reader.releaseLock();
     }
+  }
+
+  private async postJson<T = unknown>(
+    path: string,
+    body: Record<string, unknown>,
+  ): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new PlatformAPIError(res.status, await res.text());
+    return res.json();
   }
 
   private headers(): Record<string, string> {
