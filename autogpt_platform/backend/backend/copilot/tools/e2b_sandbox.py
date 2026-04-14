@@ -50,9 +50,21 @@ logger = logging.getLogger(__name__)
 _SANDBOX_KEY_PREFIX = "copilot:e2b:sandbox:"
 _CREATING_SENTINEL = "creating"
 
+# Per-attempt timeout for AsyncSandbox.create().  E2B normally provisions a
+# sandbox in 5-15 s; 30 s gives generous headroom while ensuring a slow/hung
+# E2B API call fails fast rather than blocking an executor goroutine for hours.
+_SANDBOX_CREATE_TIMEOUT_SECONDS = 30
+
+# Number of creation attempts before giving up.  Three attempts with 1 s / 2 s
+# backoff means the worst-case wait is ~93 s (30+1+30+2+30) — far better than
+# the indefinite hang that caused the original incident.
+_SANDBOX_CREATE_MAX_RETRIES = 3
+
 # Short TTL for the "creating" sentinel — if the process dies mid-creation the
 # lock auto-expires so other callers are not blocked forever.
-_CREATION_LOCK_TTL = 60  # seconds
+# Must be ≥ worst-case retry time: _SANDBOX_CREATE_MAX_RETRIES ×
+# _SANDBOX_CREATE_TIMEOUT_SECONDS + inter-retry backoff ≈ 93 s → 120 s.
+_CREATION_LOCK_TTL = 120  # seconds
 
 _MAX_WAIT_ATTEMPTS = 20  # 20 × 0.5 s = 10 s max wait
 
@@ -157,18 +169,45 @@ async def get_or_create_sandbox(
             await asyncio.sleep(0.1)
             continue
 
-        # We hold the slot — create the sandbox.
+        # We hold the slot — create the sandbox with per-attempt timeout and
+        # retry.  The sentinel remains held throughout so concurrent callers
+        # for the same session wait rather than racing to create duplicates.
         try:
             lifecycle = SandboxLifecycle(
                 on_timeout=on_timeout,
                 auto_resume=on_timeout == "pause",
             )
-            sandbox = await AsyncSandbox.create(
-                template=template,
-                api_key=api_key,
-                timeout=timeout,
-                lifecycle=lifecycle,
-            )
+            last_exc: Exception | None = None
+            sandbox: AsyncSandbox | None = None
+            for attempt in range(1, _SANDBOX_CREATE_MAX_RETRIES + 1):
+                try:
+                    sandbox = await asyncio.wait_for(
+                        AsyncSandbox.create(
+                            template=template,
+                            api_key=api_key,
+                            timeout=timeout,
+                            lifecycle=lifecycle,
+                        ),
+                        timeout=_SANDBOX_CREATE_TIMEOUT_SECONDS,
+                    )
+                    last_exc = None
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    logger.warning(
+                        "[E2B] Sandbox creation attempt %d/%d failed for session %.12s: %s",
+                        attempt,
+                        _SANDBOX_CREATE_MAX_RETRIES,
+                        session_id,
+                        exc,
+                    )
+                    if attempt < _SANDBOX_CREATE_MAX_RETRIES:
+                        await asyncio.sleep(2 ** (attempt - 1))  # 1 s, 2 s
+
+            if last_exc is not None:
+                raise last_exc
+
+            assert sandbox is not None  # guaranteed: last_exc is None iff break was hit
             try:
                 await _set_stored_sandbox_id(session_id, sandbox.sandbox_id)
             except Exception:
