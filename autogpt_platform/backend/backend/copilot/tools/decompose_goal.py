@@ -163,7 +163,7 @@ async def cancel_auto_approve(session_id: str) -> bool:
     return True
 
 
-def _schedule_auto_approve(
+async def _schedule_auto_approve(
     session_id: str | None, user_id: str | None, session: ChatSession
 ) -> None:
     """Schedule the fire-and-forget auto-approve task for this session.
@@ -176,11 +176,14 @@ def _schedule_auto_approve(
     if not session_id:
         return
     # Cancel any existing pending approval for this session (e.g. if the
-    # LLM called decompose_goal twice in one turn). Best-effort in-process
-    # cancel only — skip the async Redis call here to keep scheduling fast.
+    # LLM called decompose_goal twice in one turn).
     old_task = _pending_auto_approvals.pop(session_id, None)
     if old_task is not None and not old_task.done():
         old_task.cancel()
+    # Clear any stale Redis cancel flag from a previous Modify click so
+    # the new auto-approve task isn't incorrectly suppressed.
+    redis = await get_redis_async()
+    await redis.delete(f"{_CANCEL_KEY_PREFIX}{session_id}")
     baseline_index = len(session.messages)
     task = asyncio.create_task(_run_auto_approve(session_id, user_id, baseline_index))
     _pending_auto_approvals[session_id] = task
@@ -301,7 +304,7 @@ class DecomposeGoalTool(BaseTool):
                 )
             )
 
-        _schedule_auto_approve(session_id, user_id, session)
+        await _schedule_auto_approve(session_id, user_id, session)
 
         return TaskDecompositionResponse(
             message=f"Here's the plan to build your agent ({len(decomposition_steps)} steps):",

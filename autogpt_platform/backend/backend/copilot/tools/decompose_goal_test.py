@@ -42,9 +42,11 @@ def _stub_auto_approve_scheduler():
     fire-and-forget scheduler so they don't kick off real timers that try to
     hit Redis/Postgres. Tests that exercise auto-approve override this with
     their own patches inside the test body."""
-    with patch.object(
-        decompose_goal_module, "_schedule_auto_approve", lambda *a, **kw: None
-    ):
+
+    async def _noop(*a, **kw):
+        pass
+
+    with patch.object(decompose_goal_module, "_schedule_auto_approve", _noop):
         yield
 
 
@@ -390,6 +392,9 @@ class _FakeRedisNoCancelFlag:
     async def set(self, key, value, ex=None):
         pass
 
+    async def delete(self, key):
+        pass
+
 
 def _stub_redis():
     """Patch get_redis_async to return a fake Redis (no real connection)."""
@@ -523,6 +528,11 @@ async def test_schedule_auto_approve_creates_task(monkeypatch):
     monkeypatch.setattr(decompose_goal_module, "AUTO_APPROVE_SERVER_SECONDS", 0)
     fake_run = AsyncMock()
     monkeypatch.setattr(decompose_goal_module, "_run_auto_approve", fake_run)
+    monkeypatch.setattr(
+        decompose_goal_module,
+        "get_redis_async",
+        AsyncMock(return_value=_FakeRedisNoCancelFlag()),
+    )
 
     session = make_session(_USER_ID)
     # Two messages already in the session — the next one (the tool result)
@@ -530,7 +540,7 @@ async def test_schedule_auto_approve_creates_task(monkeypatch):
     session.messages.append(ChatMessage(role="user", content="initial"))
     session.messages.append(ChatMessage(role="assistant", content="tool call"))
 
-    _REAL_SCHEDULE_AUTO_APPROVE(
+    await _REAL_SCHEDULE_AUTO_APPROVE(
         session_id="session-schedule",
         user_id=_USER_ID,
         session=session,
@@ -544,10 +554,11 @@ async def test_schedule_auto_approve_creates_task(monkeypatch):
     fake_run.assert_awaited_once_with("session-schedule", _USER_ID, 2)
 
 
-def test_schedule_auto_approve_no_op_without_session_id():
+@pytest.mark.asyncio
+async def test_schedule_auto_approve_no_op_without_session_id():
     """Empty session id should be a no-op (defensive)."""
     session = make_session(_USER_ID)
-    decompose_goal_module._schedule_auto_approve(
+    await decompose_goal_module._schedule_auto_approve(
         session_id=None, user_id=_USER_ID, session=session
     )
     assert len(decompose_goal_module._pending_auto_approvals) == 0
@@ -575,12 +586,15 @@ async def test_cancel_auto_approve_sets_redis_flag_and_cancels_task(monkeypatch)
         async def get(self, key):
             return None
 
+        async def delete(self, key):
+            pass
+
     monkeypatch.setattr(
         decompose_goal_module, "get_redis_async", AsyncMock(return_value=FakeRedis())
     )
 
     session = make_session(_USER_ID)
-    _REAL_SCHEDULE_AUTO_APPROVE(
+    await _REAL_SCHEDULE_AUTO_APPROVE(
         session_id="session-cancel-test",
         user_id=_USER_ID,
         session=session,
