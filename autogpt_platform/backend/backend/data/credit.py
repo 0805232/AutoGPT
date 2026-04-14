@@ -1282,13 +1282,20 @@ async def set_subscription_tier(user_id: str, tier: SubscriptionTier) -> None:
 
 
 async def _cancel_customer_subscriptions(
-    customer_id: str, exclude_sub_id: str | None = None
+    customer_id: str,
+    exclude_sub_id: str | None = None,
+    at_period_end: bool = False,
 ) -> None:
     """Cancel all billable Stripe subscriptions for a customer, optionally excluding one.
 
     Cancels both ``active`` and ``trialing`` subscriptions, since trialing subs will
     start billing once the trial ends and must be cleaned up on downgrade/upgrade to
     avoid double-charging or charging users who intended to cancel.
+
+    When ``at_period_end=True``, schedules cancellation at the end of the current
+    billing period instead of cancelling immediately — the user keeps their tier
+    until the period ends, then ``customer.subscription.deleted`` fires and the
+    webhook downgrades them to FREE.
 
     Wraps every synchronous Stripe SDK call with run_in_threadpool so the async event
     loop is never blocked. Raises stripe.StripeError on list/cancel failure so callers
@@ -1319,18 +1326,27 @@ async def _cancel_customer_subscriptions(
             if sub_id in seen_ids:
                 continue
             seen_ids.add(sub_id)
-            await run_in_threadpool(stripe.Subscription.cancel, sub_id)
+            if at_period_end:
+                await run_in_threadpool(
+                    stripe.Subscription.modify, sub_id, cancel_at_period_end=True
+                )
+            else:
+                await run_in_threadpool(stripe.Subscription.cancel, sub_id)
 
 
 async def cancel_stripe_subscription(user_id: str) -> None:
-    """Cancel all active/trialing Stripe subscriptions for a user (called on downgrade to FREE).
+    """Schedule cancellation of all active/trialing Stripe subscriptions at period end.
 
-    Raises stripe.StripeError if any cancellation fails, so the caller can avoid
+    The subscription stays active until the end of the billing period so the user
+    keeps their tier for the time they already paid for. The ``customer.subscription.deleted``
+    webhook fires at period end and downgrades the DB tier to FREE.
+
+    Raises stripe.StripeError if any modification fails, so the caller can avoid
     updating the DB tier when Stripe is inconsistent.
     """
     customer_id = await get_stripe_customer_id(user_id)
     try:
-        await _cancel_customer_subscriptions(customer_id)
+        await _cancel_customer_subscriptions(customer_id, at_period_end=True)
     except stripe.StripeError:
         logger.warning(
             "cancel_stripe_subscription: Stripe error while cancelling subs for user %s",

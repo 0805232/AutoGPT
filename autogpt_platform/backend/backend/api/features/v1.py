@@ -831,7 +831,11 @@ async def update_subscription_tier(
         Flag.ENABLE_PLATFORM_PAYMENT, user_id, default=False
     )
 
-    # Downgrade to FREE: cancel active Stripe subscription, then update the DB tier.
+    # Downgrade to FREE: schedule Stripe cancellation at period end so the user
+    # keeps their tier for the time they already paid for. The DB tier is NOT
+    # updated here — the customer.subscription.deleted webhook fires at period
+    # end and downgrades to FREE then. When payment is disabled there is no
+    # Stripe subscription, so update the DB tier directly.
     if tier == SubscriptionTier.FREE:
         if payment_enabled:
             try:
@@ -852,6 +856,7 @@ async def update_subscription_tier(
                         "Please try again or contact support."
                     ),
                 )
+            return SubscriptionCheckoutResponse(url="")
         await set_subscription_tier(user_id, tier)
         return SubscriptionCheckoutResponse(url="")
 

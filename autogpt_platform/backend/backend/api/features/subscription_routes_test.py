@@ -434,11 +434,15 @@ def test_update_subscription_tier_same_tier_is_noop(
     checkout_mock.assert_not_awaited()
 
 
-def test_update_subscription_tier_free_with_payment_cancels_stripe(
+def test_update_subscription_tier_free_with_payment_schedules_cancel_and_does_not_update_db(
     client: fastapi.testclient.TestClient,
     mocker: pytest_mock.MockFixture,
 ) -> None:
-    """Downgrading to FREE cancels active Stripe subscription when payment is enabled."""
+    """Downgrading to FREE schedules Stripe cancellation at period end.
+
+    The DB tier must NOT be updated immediately — the customer.subscription.deleted
+    webhook fires at period end and downgrades to FREE then.
+    """
     mock_user = Mock()
     mock_user.subscription_tier = SubscriptionTier.PRO
 
@@ -449,14 +453,14 @@ def test_update_subscription_tier_free_with_payment_cancels_stripe(
         "backend.api.features.v1.cancel_stripe_subscription",
         new_callable=AsyncMock,
     )
+    mock_set_tier = mocker.patch(
+        "backend.api.features.v1.set_subscription_tier",
+        new_callable=AsyncMock,
+    )
     mocker.patch(
         "backend.api.features.v1.get_user_by_id",
         new_callable=AsyncMock,
         return_value=mock_user,
-    )
-    mocker.patch(
-        "backend.api.features.v1.set_subscription_tier",
-        new_callable=AsyncMock,
     )
     mocker.patch(
         "backend.api.features.v1.is_feature_enabled",
@@ -467,6 +471,7 @@ def test_update_subscription_tier_free_with_payment_cancels_stripe(
 
     assert response.status_code == 200
     mock_cancel.assert_awaited_once()
+    mock_set_tier.assert_not_awaited()
 
 
 def test_update_subscription_tier_free_cancel_failure_returns_502(
