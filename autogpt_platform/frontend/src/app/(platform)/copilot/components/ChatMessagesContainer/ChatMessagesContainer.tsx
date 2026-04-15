@@ -141,6 +141,7 @@ export function LoadMoreSentinel({
   messageCount,
   onLoadMore,
   rootMargin = "200px 0px 0px 0px",
+  adjustScroll = true,
 }: {
   hasMore: boolean;
   isLoading: boolean;
@@ -150,6 +151,10 @@ export function LoadMoreSentinel({
    *  (pre-trigger when approaching from above); bottom sentinel should use
    *  "0px 0px 200px 0px" (pre-trigger when approaching from below). */
   rootMargin?: string;
+  /** Whether to adjust scrollTop after load to preserve visual position.
+   *  True for backward pagination (prepend above); false for forward
+   *  pagination (append below) where no adjustment is needed. */
+  adjustScroll?: boolean;
 }) {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const onLoadMoreRef = useRef(onLoadMore);
@@ -211,7 +216,9 @@ export function LoadMoreSentinel({
       scrollSnapshotRef.current;
     if (!el || prevHeight === 0) return;
     const delta = el.scrollHeight - prevHeight;
-    if (delta > 0) {
+    // Only restore scroll position for backward pagination (content prepended
+    // above). Forward pagination appends below — no adjustment needed.
+    if (adjustScroll && delta > 0) {
       el.scrollTop = prevTop + delta;
     }
     // Reset the auto-fill backoff whenever the container becomes
@@ -225,7 +232,7 @@ export function LoadMoreSentinel({
     }
     scrollSnapshotRef.current = { scrollHeight: 0, scrollTop: 0 };
     autoTriggeredRef.current = false;
-  }, [messageCount, scrollRef]);
+  }, [adjustScroll, messageCount, scrollRef]);
 
   return (
     <div
@@ -506,6 +513,7 @@ export function ChatMessagesContainer({
             messageCount={messages.length}
             onLoadMore={onLoadMore}
             rootMargin="0px 0px 200px 0px"
+            adjustScroll={false}
           />
         )}
       </ConversationContent>
