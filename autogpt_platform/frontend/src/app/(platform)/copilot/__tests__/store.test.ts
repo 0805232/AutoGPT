@@ -22,7 +22,7 @@ describe("useCopilotUIStore", () => {
       isNotificationsEnabled: false,
       isSoundEnabled: true,
       showNotificationDialog: false,
-      copilotMode: "extended_thinking",
+      copilotChatMode: "extended_thinking",
     });
   });
 
@@ -154,35 +154,35 @@ describe("useCopilotUIStore", () => {
     });
   });
 
-  describe("copilotMode", () => {
+  describe("copilotChatMode", () => {
     it("defaults to extended_thinking", () => {
-      expect(useCopilotUIStore.getState().copilotMode).toBe(
+      expect(useCopilotUIStore.getState().copilotChatMode).toBe(
         "extended_thinking",
       );
     });
 
     it("sets mode to fast", () => {
-      useCopilotUIStore.getState().setCopilotMode("fast");
-      expect(useCopilotUIStore.getState().copilotMode).toBe("fast");
+      useCopilotUIStore.getState().setCopilotChatMode("fast");
+      expect(useCopilotUIStore.getState().copilotChatMode).toBe("fast");
     });
 
     it("sets mode back to extended_thinking", () => {
-      useCopilotUIStore.getState().setCopilotMode("fast");
-      useCopilotUIStore.getState().setCopilotMode("extended_thinking");
-      expect(useCopilotUIStore.getState().copilotMode).toBe(
+      useCopilotUIStore.getState().setCopilotChatMode("fast");
+      useCopilotUIStore.getState().setCopilotChatMode("extended_thinking");
+      expect(useCopilotUIStore.getState().copilotChatMode).toBe(
         "extended_thinking",
       );
     });
 
     it("does not persist mode to localStorage", () => {
-      useCopilotUIStore.getState().setCopilotMode("fast");
+      useCopilotUIStore.getState().setCopilotChatMode("fast");
       expect(window.localStorage.getItem("copilot-mode")).toBeNull();
     });
   });
 
   describe("clearCopilotLocalData", () => {
     it("resets state and clears localStorage keys", () => {
-      useCopilotUIStore.getState().setCopilotMode("fast");
+      useCopilotUIStore.getState().setCopilotChatMode("fast");
       useCopilotUIStore.getState().setNotificationsEnabled(true);
       useCopilotUIStore.getState().toggleSound();
       useCopilotUIStore.getState().addCompletedSession("s1");
@@ -190,7 +190,7 @@ describe("useCopilotUIStore", () => {
       useCopilotUIStore.getState().clearCopilotLocalData();
 
       const state = useCopilotUIStore.getState();
-      expect(state.copilotMode).toBe("extended_thinking");
+      expect(state.copilotChatMode).toBe("extended_thinking");
       expect(state.isNotificationsEnabled).toBe(false);
       expect(state.isSoundEnabled).toBe(true);
       expect(state.completedSessionIDs.size).toBe(0);

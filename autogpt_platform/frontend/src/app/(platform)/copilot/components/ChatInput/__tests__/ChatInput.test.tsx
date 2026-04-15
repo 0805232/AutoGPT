@@ -8,14 +8,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatInput } from "../ChatInput";
 
 let mockCopilotMode = "extended_thinking";
-const mockSetCopilotMode = vi.fn((mode: string) => {
+const mockSetCopilotChatMode = vi.fn((mode: string) => {
   mockCopilotMode = mode;
 });
 
 vi.mock("@/app/(platform)/copilot/store", () => ({
   useCopilotUIStore: () => ({
-    copilotMode: mockCopilotMode,
-    setCopilotMode: mockSetCopilotMode,
+    copilotChatMode: mockCopilotMode,
+    setCopilotChatMode: mockSetCopilotChatMode,
+    copilotLlmModel: "standard",
+    setCopilotLlmModel: vi.fn(),
     initialPrompt: null,
     setInitialPrompt: vi.fn(),
   }),
@@ -141,7 +143,7 @@ describe("ChatInput mode toggle", () => {
     mockCopilotMode = "extended_thinking";
     render(<ChatInput onSend={mockOnSend} />);
     fireEvent.click(screen.getByLabelText(/switch to fast mode/i));
-    expect(mockSetCopilotMode).toHaveBeenCalledWith("fast");
+    expect(mockSetCopilotChatMode).toHaveBeenCalledWith("fast");
   });
 
   it("toggles from fast to extended_thinking on click", () => {
@@ -149,7 +151,7 @@ describe("ChatInput mode toggle", () => {
     mockCopilotMode = "fast";
     render(<ChatInput onSend={mockOnSend} />);
     fireEvent.click(screen.getByLabelText(/switch to extended thinking/i));
-    expect(mockSetCopilotMode).toHaveBeenCalledWith("extended_thinking");
+    expect(mockSetCopilotChatMode).toHaveBeenCalledWith("extended_thinking");
   });
 
   it("hides toggle button when streaming", () => {
