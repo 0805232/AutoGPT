@@ -4,8 +4,10 @@
  * Covers: parseOutput / getDecomposeGoalOutput, type guards, getAnimationText
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  computeRemainingSeconds,
+  FALLBACK_COUNTDOWN_SECONDS,
   getAnimationText,
   getDecomposeGoalOutput,
   isDecompositionOutput,
@@ -204,5 +206,90 @@ describe("getAnimationText", () => {
   it("falls back to analyzing for unknown state", () => {
     const text = getAnimationText({ state: "result" as never });
     expect(text.toLowerCase()).toContain("analyzing");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeRemainingSeconds
+// ---------------------------------------------------------------------------
+
+const DECOMPOSITION_BASE: TaskDecompositionOutput = {
+  type: "task_decomposition",
+  message: "Plan",
+  goal: "Build agent",
+  steps: [{ step_id: "s1", description: "Step 1", action: "add_block" }],
+  step_count: 1,
+  requires_approval: true,
+  auto_approve_seconds: 60,
+  created_at: new Date().toISOString(),
+};
+
+describe("computeRemainingSeconds", () => {
+  it("returns fallback when output is null", () => {
+    expect(computeRemainingSeconds(null, 60)).toBe(60);
+  });
+
+  it("returns fallback when output is an error", () => {
+    const err: DecomposeErrorOutput = { type: "error", error: "oops" };
+    expect(computeRemainingSeconds(err, 60)).toBe(60);
+  });
+
+  it("returns auto_approve_seconds when created_at is missing", () => {
+    const noTimestamp = { ...DECOMPOSITION_BASE, created_at: undefined };
+    expect(computeRemainingSeconds(noTimestamp, 99)).toBe(60);
+  });
+
+  it("returns auto_approve_seconds when created_at is unparseable", () => {
+    const badTimestamp = { ...DECOMPOSITION_BASE, created_at: "not-a-date" };
+    expect(computeRemainingSeconds(badTimestamp, 99)).toBe(60);
+  });
+
+  it("returns correct remaining seconds for a recent timestamp", () => {
+    vi.useFakeTimers();
+    const now = new Date("2026-01-01T00:00:30Z");
+    vi.setSystemTime(now);
+    const output = {
+      ...DECOMPOSITION_BASE,
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    // 30s elapsed → 60 - 30 = 30
+    expect(computeRemainingSeconds(output, 60)).toBe(30);
+    vi.useRealTimers();
+  });
+
+  it("clamps to 0 when deadline has passed", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:02:00Z"));
+    const output = {
+      ...DECOMPOSITION_BASE,
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    expect(computeRemainingSeconds(output, 60)).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it("clamps to total when client clock is ahead (future timestamp)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const output = {
+      ...DECOMPOSITION_BASE,
+      created_at: "2026-01-01T00:00:10Z",
+    };
+    // elapsed = -10 → total - (-10) = 70, clamped to 60
+    expect(computeRemainingSeconds(output, 60)).toBe(60);
+    vi.useRealTimers();
+  });
+
+  it("uses fallback when auto_approve_seconds is missing", () => {
+    const noAutoApprove = {
+      ...DECOMPOSITION_BASE,
+      auto_approve_seconds: undefined,
+      created_at: undefined,
+    };
+    expect(computeRemainingSeconds(noAutoApprove, 42)).toBe(42);
+  });
+
+  it("exports FALLBACK_COUNTDOWN_SECONDS as 60", () => {
+    expect(FALLBACK_COUNTDOWN_SECONDS).toBe(60);
   });
 });

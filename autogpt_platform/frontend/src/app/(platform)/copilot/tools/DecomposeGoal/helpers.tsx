@@ -42,6 +42,33 @@ export type DecomposeGoalOutput =
   | TaskDecompositionOutput
   | DecomposeErrorOutput;
 
+// Fallback used only if the backend response omits auto_approve_seconds
+// (older sessions). The authoritative value comes from the tool output.
+export const FALLBACK_COUNTDOWN_SECONDS = 60;
+
+/**
+ * Compute remaining countdown seconds, deriving elapsed time from the
+ * backend-stamped ``created_at`` so the timer reflects real elapsed time
+ * when the user reopens the session — instead of restarting from full.
+ *
+ * Falls back to the full countdown when ``created_at`` is missing (older
+ * sessions stored before this field existed) or unparseable. Clamps to
+ * ``[0, total]`` to defend against client clock skew producing future
+ * timestamps.
+ */
+export function computeRemainingSeconds(
+  output: DecomposeGoalOutput | null,
+  fallback: number,
+): number {
+  if (!output || !isDecompositionOutput(output)) return fallback;
+  const total = output.auto_approve_seconds ?? fallback;
+  if (!output.created_at) return total;
+  const createdAtMs = new Date(output.created_at).getTime();
+  if (Number.isNaN(createdAtMs)) return total;
+  const elapsedSec = (Date.now() - createdAtMs) / 1000;
+  return Math.max(0, Math.min(total, Math.round(total - elapsedSec)));
+}
+
 function parseOutput(output: unknown): DecomposeGoalOutput | null {
   if (!output) return null;
   if (typeof output === "string") {

@@ -21,42 +21,18 @@ import { ToolErrorCard } from "../../components/ToolErrorCard/ToolErrorCard";
 import { StepItem } from "./components/StepItem";
 import {
   AccordionIcon,
+  computeRemainingSeconds,
   getAnimationText,
   getDecomposeGoalOutput,
   isDecompositionOutput,
   isErrorOutput,
+  FALLBACK_COUNTDOWN_SECONDS,
   ToolIcon,
   type DecomposeGoalOutput,
 } from "./helpers";
 
-// Fallback used only if the backend response omits auto_approve_seconds
-// (older sessions). The authoritative value comes from the tool output.
-const FALLBACK_COUNTDOWN_SECONDS = 60;
 const RADIUS = 15;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
-
-/**
- * Compute remaining countdown seconds, deriving elapsed time from the
- * backend-stamped ``created_at`` so the timer reflects real elapsed time
- * when the user reopens the session — instead of restarting from full.
- *
- * Falls back to the full countdown when ``created_at`` is missing (older
- * sessions stored before this field existed) or unparseable. Clamps to
- * ``[0, total]`` to defend against client clock skew producing future
- * timestamps.
- */
-function computeRemainingSeconds(
-  output: DecomposeGoalOutput | null,
-  fallback: number,
-): number {
-  if (!output || !isDecompositionOutput(output)) return fallback;
-  const total = output.auto_approve_seconds ?? fallback;
-  if (!output.created_at) return total;
-  const createdAtMs = new Date(output.created_at).getTime();
-  if (Number.isNaN(createdAtMs)) return total;
-  const elapsedSec = (Date.now() - createdAtMs) / 1000;
-  return Math.max(0, Math.min(total, Math.round(total - elapsedSec)));
-}
 
 interface EditableStep {
   step_id: string;
