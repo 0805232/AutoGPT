@@ -358,3 +358,35 @@ async def test_create_library_agent_uses_upsert():
     # Verify update branch restores soft-deleted/archived agents
     assert data["update"]["isDeleted"] is False
     assert data["update"]["isArchived"] is False
+
+
+@pytest.mark.asyncio
+async def test_fetch_execution_counts_empty_graph_ids():
+    result = await db._fetch_execution_counts("user-1", [])
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_fetch_execution_counts_uses_group_by(mocker):
+    mock_prisma = mocker.patch("prisma.models.AgentGraphExecution.prisma")
+    mock_prisma.return_value.group_by = mocker.AsyncMock(
+        return_value=[
+            {"agentGraphId": "graph-1", "_count": {"_all": 5}},
+            {"agentGraphId": "graph-2", "_count": {"_all": 2}},
+        ]
+    )
+
+    result = await db._fetch_execution_counts(
+        "user-1", ["graph-1", "graph-2", "graph-3"]
+    )
+
+    assert result == {"graph-1": 5, "graph-2": 2}
+    mock_prisma.return_value.group_by.assert_called_once_with(
+        by=["agentGraphId"],
+        where={
+            "userId": "user-1",
+            "agentGraphId": {"in": ["graph-1", "graph-2", "graph-3"]},
+            "isDeleted": False,
+        },
+        count=True,
+    )
