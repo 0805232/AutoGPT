@@ -6,7 +6,7 @@ import {
   parseSpecialMarkers,
   splitReasoningAndResponse,
 } from "../helpers";
-import type { MessagePart, RenderSegment } from "../helpers";
+import type { MessagePart } from "../helpers";
 
 function textPart(text: string): MessagePart {
   return { type: "text", text } as MessagePart;
