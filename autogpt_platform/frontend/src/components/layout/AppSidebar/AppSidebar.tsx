@@ -43,6 +43,7 @@ import { UsageLimits } from "@/app/(platform)/copilot/components/UsageLimits/Usa
 import { NotificationToggle } from "@/app/(platform)/copilot/components/ChatSidebar/components/NotificationToggle/NotificationToggle";
 import { AgentActivityDropdown } from "@/components/layout/Navbar/components/AgentActivityDropdown/AgentActivityDropdown";
 import { useTallyPopup } from "@/components/molecules/TallyPoup/useTallyPopup";
+import { Flag, useGetFlag } from "@/services/feature-flags/use-get-flag";
 
 interface Props {
   dynamicContent?: ReactNode;
@@ -54,6 +55,7 @@ export function AppSidebar({ dynamicContent }: Props) {
   const pathname = usePathname();
   const { state: tallyState } = useTallyPopup();
   const { isLoggedIn } = useSupabase();
+  const isNewSidebar = useGetFlag(Flag.NEW_SIDEBAR);
 
   const [loadingHref, setLoadingHref] = useState<string | null>(null);
   const [isTasksOpen, setIsTasksOpen] = useState(true);
@@ -64,36 +66,64 @@ export function AppSidebar({ dynamicContent }: Props) {
 
   const homeHref = "/copilot";
 
-  const navLinks = [
-    {
-      name: "Search",
-      href: "/marketplace/search",
-      icon: MagnifyingGlass,
-      testId: "sidebar-link-search",
-      showWhenCollapsed: true,
-    },
-    {
-      name: "Workflows",
-      href: "/library",
-      icon: Books,
-      testId: "sidebar-link-workflows",
-      showWhenCollapsed: true,
-    },
-    {
-      name: "Explore",
-      href: "/marketplace",
-      icon: ShoppingBag,
-      testId: "sidebar-link-marketplace",
-      showWhenCollapsed: false,
-    },
-    {
-      name: "Builder",
-      href: "/build",
-      icon: PenNibStraight,
-      testId: "sidebar-link-build",
-      showWhenCollapsed: false,
-    },
-  ];
+  const navLinks = isNewSidebar
+    ? [
+        {
+          name: "Search",
+          href: "/marketplace/search",
+          icon: MagnifyingGlass,
+          testId: "sidebar-link-search",
+          showWhenCollapsed: true,
+        },
+        {
+          name: "Workflows",
+          href: "/library",
+          icon: Books,
+          testId: "sidebar-link-workflows",
+          showWhenCollapsed: true,
+        },
+        {
+          name: "Explore",
+          href: "/marketplace",
+          icon: ShoppingBag,
+          testId: "sidebar-link-marketplace",
+          showWhenCollapsed: false,
+        },
+        {
+          name: "Builder",
+          href: "/build",
+          icon: PenNibStraight,
+          testId: "sidebar-link-build",
+          showWhenCollapsed: false,
+        },
+      ]
+    : [
+        {
+          name: "Workflows",
+          href: "/library",
+          icon: Books,
+          testId: "sidebar-link-workflows",
+          showWhenCollapsed: true,
+        },
+        {
+          name: "Explore",
+          href: "/marketplace",
+          icon: ShoppingBag,
+          testId: "sidebar-link-marketplace",
+          showWhenCollapsed: true,
+        },
+        {
+          name: "Builder",
+          href: "/build",
+          icon: PenNibStraight,
+          testId: "sidebar-link-build",
+          showWhenCollapsed: true,
+        },
+      ];
+
+  const filteredNavLinks = isNewSidebar
+    ? navLinks.filter((link) => !isCollapsed || link.showWhenCollapsed)
+    : navLinks;
 
   function isActive(href: string) {
     if (href === homeHref) {
@@ -120,12 +150,7 @@ export function AppSidebar({ dynamicContent }: Props) {
         )}
       >
         {!isCollapsed && (
-          <motion.div
-            className="flex w-full items-center justify-between"
-            initial={{ opacity: 0, y: -6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
-          >
+          <div className="flex w-full items-center justify-between">
             <Link href={homeHref}>
               <IconAutoGPTLogo className="h-7 w-auto" />
             </Link>
@@ -140,9 +165,9 @@ export function AppSidebar({ dynamicContent }: Props) {
                 </TooltipContent>
               </Tooltip>
             </div>
-          </motion.div>
+          </div>
         )}
-        {isCollapsed && (
+        {isCollapsed && isNewSidebar && (
           <div className="relative flex flex-col items-center">
             <Link
               href={homeHref}
@@ -153,86 +178,105 @@ export function AppSidebar({ dynamicContent }: Props) {
             <SidebarTrigger className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100 hover:bg-sidebar-accent [&>svg]:!size-5" />
           </div>
         )}
+        {isCollapsed && !isNewSidebar && (
+          <div className="flex flex-col items-center">
+            <Link href={homeHref}>
+              <IconAutoGPTLogoMinimal className="h-6 w-6" />
+            </Link>
+          </div>
+        )}
       </SidebarHeader>
 
       {/* Navigation links */}
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupContent>
-            <div>
-              <SidebarMenu className={cn(isCollapsed && "gap-3")}>
+            <SidebarMenu className={cn(isCollapsed && "gap-3")}>
+              {isCollapsed && !isNewSidebar && (
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild
-                    isActive={isActive(homeHref)}
-                    tooltip="New Task"
+                    tooltip="Open sidebar"
+                    className="py-5"
+                  >
+                    <SidebarTrigger className="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&>svg]:!size-5" />
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {isCollapsed && !isNewSidebar && (
+                <SidebarMenuItem>
+                  <AgentActivityDropdown />
+                </SidebarMenuItem>
+              )}
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  isActive={isActive(homeHref)}
+                  tooltip="New Task"
+                  className={cn(
+                    "!rounded-xl py-5 data-[active=true]:!bg-zinc-200 data-[active=true]:!font-normal",
+                    !isCollapsed && "gap-3",
+                  )}
+                >
+                  <Link
+                    href="/copilot"
+                    data-testid="sidebar-link-new-task"
+                    onClick={() =>
+                      !isActive(homeHref) && setLoadingHref(homeHref)
+                    }
+                  >
+                    {loadingHref === homeHref && isCollapsed ? (
+                      <CircleNotch className="!size-5 animate-spin text-zinc-600" />
+                    ) : (
+                      <NotePencil className="!size-5" weight="regular" />
+                    )}
+                    {!isCollapsed && <span className="flex-1">New Task</span>}
+                    {loadingHref === homeHref && !isCollapsed && (
+                      <CircleNotch className="!size-4 animate-spin text-zinc-600" />
+                    )}
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              {filteredNavLinks.map((link) => (
+                <SidebarMenuItem key={link.name}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isActive(link.href)}
+                    tooltip={link.name}
                     className={cn(
                       "!rounded-xl py-5 data-[active=true]:!bg-zinc-200 data-[active=true]:!font-normal",
                       !isCollapsed && "gap-3",
                     )}
                   >
                     <Link
-                      href="/copilot"
-                      data-testid="sidebar-link-new-task"
+                      href={link.href}
+                      data-testid={link.testId}
                       onClick={() =>
-                        !isActive(homeHref) && setLoadingHref(homeHref)
+                        !isActive(link.href) && setLoadingHref(link.href)
                       }
                     >
-                      {loadingHref === homeHref && isCollapsed ? (
+                      {loadingHref === link.href && isCollapsed ? (
                         <CircleNotch className="!size-5 animate-spin text-zinc-600" />
                       ) : (
-                        <NotePencil className="!size-5" weight="regular" />
+                        <link.icon className="!size-5" weight="regular" />
                       )}
-                      {!isCollapsed && <span className="flex-1">New Task</span>}
-                      {loadingHref === homeHref && !isCollapsed && (
+                      {!isCollapsed && (
+                        <span className="flex-1">{link.name}</span>
+                      )}
+                      {loadingHref === link.href && !isCollapsed && (
                         <CircleNotch className="!size-4 animate-spin text-zinc-600" />
                       )}
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                {navLinks
-                  .filter((link) => !isCollapsed || link.showWhenCollapsed)
-                  .map((link) => (
-                    <SidebarMenuItem key={link.name}>
-                      <SidebarMenuButton
-                        asChild
-                        isActive={isActive(link.href)}
-                        tooltip={link.name}
-                        className={cn(
-                          "!rounded-xl py-5 data-[active=true]:!bg-zinc-200 data-[active=true]:!font-normal",
-                          !isCollapsed && "gap-3",
-                        )}
-                      >
-                        <Link
-                          href={link.href}
-                          data-testid={link.testId}
-                          onClick={() =>
-                            !isActive(link.href) && setLoadingHref(link.href)
-                          }
-                        >
-                          {loadingHref === link.href && isCollapsed ? (
-                            <CircleNotch className="!size-5 animate-spin text-zinc-600" />
-                          ) : (
-                            <link.icon className="!size-5" weight="regular" />
-                          )}
-                          {!isCollapsed && (
-                            <span className="flex-1">{link.name}</span>
-                          )}
-                          {loadingHref === link.href && !isCollapsed && (
-                            <CircleNotch className="!size-4 animate-spin text-zinc-600" />
-                          )}
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-              </SidebarMenu>
-            </div>
+              ))}
+            </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 
         {dynamicContent && (
           <SidebarGroup className="flex-1 overflow-hidden">
-            {!isCollapsed && (
+            {!isCollapsed && isNewSidebar && (
               <>
                 <button
                   onClick={() => setIsTasksOpen((prev) => !prev)}
@@ -275,6 +319,11 @@ export function AppSidebar({ dynamicContent }: Props) {
                 </AnimatePresence>
               </>
             )}
+            {!isCollapsed && !isNewSidebar && (
+              <SidebarGroupContent className="h-full overflow-y-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {dynamicContent}
+              </SidebarGroupContent>
+            )}
           </SidebarGroup>
         )}
       </SidebarContent>
@@ -297,17 +346,19 @@ export function AppSidebar({ dynamicContent }: Props) {
               Usage
             </TooltipContent>
           </Tooltip>
-          {!isCollapsed && (
+          {(!isNewSidebar || !isCollapsed) && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className="[&_button]:!flex [&_button]:!size-8 [&_button]:items-center [&_button]:justify-center [&_button]:!rounded-xl [&_button]:!p-0 [&_button]:transition-colors [&_button]:hover:bg-sidebar-accent [&_button_svg]:!size-5">
                   <NotificationToggle />
                 </div>
               </TooltipTrigger>
-              <TooltipContent side="top">Notifications</TooltipContent>
+              <TooltipContent side={isCollapsed ? "right" : "top"}>
+                Notifications
+              </TooltipContent>
             </Tooltip>
           )}
-          {!isCollapsed && !tallyState.isFormVisible && (
+          {(!isNewSidebar || !isCollapsed) && !tallyState.isFormVisible && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -337,7 +388,9 @@ export function AppSidebar({ dynamicContent }: Props) {
                   <ChatCircleDots className="!size-5" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="top">Feedback</TooltipContent>
+              <TooltipContent side={isCollapsed ? "right" : "top"}>
+                Feedback
+              </TooltipContent>
             </Tooltip>
           )}
           {!isCollapsed && <div className="flex-1" />}

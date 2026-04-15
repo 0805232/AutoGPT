@@ -28,8 +28,10 @@ import { useCopilotUIStore } from "@/app/(platform)/copilot/store";
 import { Button } from "@/components/atoms/Button/Button";
 import { Dialog } from "@/components/molecules/Dialog/Dialog";
 import { DeleteChatDialog } from "@/app/(platform)/copilot/components/DeleteChatDialog/DeleteChatDialog";
+import { Flag, useGetFlag } from "@/services/feature-flags/use-get-flag";
 
 export function ChatSessionList() {
+  const isNewSidebar = useGetFlag(Flag.NEW_SIDEBAR);
   const isMobile = useIsMobile();
   const pathname = usePathname();
   const router = useRouter();
@@ -223,6 +225,11 @@ export function ChatSessionList() {
 
   return (
     <>
+      {!isNewSidebar && (
+        <div className="flex flex-col px-3 pb-4">
+          <span className="text-sm font-medium text-zinc-600">All tasks</span>
+        </div>
+      )}
       <div className="flex flex-col gap-5">
         {isLoadingSessions ? (
           <div className="flex min-h-[30rem] items-center justify-center py-4">
