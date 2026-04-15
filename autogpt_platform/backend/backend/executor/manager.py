@@ -643,7 +643,7 @@ class ExecutionProcessor:
             graph_stats.node_count += 1 + execution_stats.extra_steps
             graph_stats.nodes_cputime += execution_stats.cputime
             graph_stats.nodes_walltime += execution_stats.walltime
-            graph_stats.cost += execution_stats.extra_cost
+            graph_stats.cost += execution_stats.cost + execution_stats.extra_cost
             if isinstance(execution_stats.error, Exception):
                 graph_stats.node_error_count += 1
 
