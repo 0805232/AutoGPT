@@ -3261,6 +3261,14 @@ async def stream_chat_completion_sdk(
         # and should be re-uploaded so the next turn can resume from it.
         # upload_cli_session silently skips when the file is absent, so this is
         # always safe.
+        #
+        # Intentionally NOT gated on skip_transcript_upload: that flag is set
+        # when our custom JSONL transcript is dropped (transcript_lost=True on
+        # reduced-context retries) but the CLI's native session file is written
+        # independently.  Blocking CLI upload on transcript_lost would prevent
+        # T1 prompt-too-long retries from uploading their valid session file,
+        # breaking --resume on the next pod.  The ended_with_stream_error gate
+        # above already covers actual turn failures.
         if (
             config.claude_agent_use_resume
             and user_id
@@ -3268,11 +3276,10 @@ async def stream_chat_completion_sdk(
             and session is not None
             and state is not None
             and not ended_with_stream_error
-            and not skip_transcript_upload
         ):
             logger.info(
                 "%s Attempting CLI session upload"
-                " (use_resume=%s, has_history=%s, skip=%s)",
+                " (use_resume=%s, has_history=%s, skip_transcript=%s)",
                 log_prefix,
                 state.use_resume,
                 has_history,
