@@ -119,13 +119,21 @@ async def _run_auto_approve(
             tool_name="chat",
             turn_id=turn_id,
         )
-        await enqueue_copilot_turn(
-            session_id=session_id,
-            user_id=user_id,
-            message=AUTO_APPROVE_MESSAGE,
-            turn_id=turn_id,
-            is_user_message=True,
-        )
+        try:
+            await enqueue_copilot_turn(
+                session_id=session_id,
+                user_id=user_id,
+                message=AUTO_APPROVE_MESSAGE,
+                turn_id=turn_id,
+                is_user_message=True,
+            )
+        except Exception:
+            # If enqueueing fails, mark the session completed so it doesn't
+            # stay stuck in "running" state in the stream registry forever.
+            await stream_registry.mark_session_completed(
+                session_id, error_message="Auto-approve enqueue failed"
+            )
+            raise
         logger.info("decompose_goal auto-approve fired for session %s", session_id)
     except asyncio.CancelledError:
         raise
