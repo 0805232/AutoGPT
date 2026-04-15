@@ -133,9 +133,19 @@ def test_stream_chat_rejects_too_many_file_ids():
     assert response.status_code == 422
 
 
-def _mock_stream_internals(mocker: pytest_mock.MockFixture):
+def _mock_stream_internals(
+    mocker: pytest_mock.MockFixture,
+    *,
+    redis_set_returns: object = True,
+):
     """Mock the async internals of stream_chat_post so tests can exercise
-    validation and enrichment logic without needing Redis/RabbitMQ."""
+    validation and enrichment logic without needing Redis/RabbitMQ.
+
+    Args:
+        redis_set_returns: Value returned by the mocked Redis ``set`` call.
+            ``True`` (default) simulates a fresh key (new message);
+            ``None`` simulates a collision (duplicate blocked).
+    """
     mocker.patch(
         "backend.api.features.chat.routes._validate_and_get_session",
         return_value=None,
@@ -158,6 +168,14 @@ def _mock_stream_internals(mocker: pytest_mock.MockFixture):
         "backend.api.features.chat.routes.track_user_message",
         return_value=None,
     )
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=redis_set_returns)
+    mocker.patch(
+        "backend.api.features.chat.routes.get_redis_async",
+        new_callable=AsyncMock,
+        return_value=mock_redis,
+    )
+    return mock_redis
 
 
 def test_stream_chat_accepts_20_file_ids(mocker: pytest_mock.MockFixture):
@@ -677,3 +695,66 @@ class TestStripInjectedContext:
         result = _strip_injected_context(msg)
         # Without a role, the helper short-circuits without touching content.
         assert result["content"] == "hello"
+
+
+# ─── Idempotency / duplicate-POST guard ──────────────────────────────
+
+
+def test_stream_chat_blocks_duplicate_post_returns_empty_sse(
+    mocker: pytest_mock.MockFixture,
+) -> None:
+    """A second POST with the same message within the 30-s window must return
+    an empty SSE stream (StreamFinish + [DONE]) so the frontend marks the
+    turn complete without creating a ghost response."""
+    # redis_set_returns=None simulates a collision: the NX key already exists.
+    _mock_stream_internals(mocker, redis_set_returns=None)
+
+    response = client.post(
+        "/sessions/sess-dup/stream",
+        json={"message": "duplicate message", "is_user_message": True},
+    )
+
+    assert response.status_code == 200
+    body = response.text
+    # The response must contain StreamFinish (type=finish) and the SSE [DONE] terminator.
+    assert '"finish"' in body
+    assert "[DONE]" in body
+
+
+def test_stream_chat_first_post_proceeds_normally(
+    mocker: pytest_mock.MockFixture,
+) -> None:
+    """The first POST (Redis NX key set successfully) must proceed through the
+    normal streaming path — no early return."""
+    mock_redis = _mock_stream_internals(mocker, redis_set_returns=True)
+
+    response = client.post(
+        "/sessions/sess-new/stream",
+        json={"message": "first message", "is_user_message": True},
+    )
+
+    assert response.status_code == 200
+    # Redis set must have been called once with the NX flag.
+    mock_redis.set.assert_called_once()
+    call_kwargs = mock_redis.set.call_args
+    assert call_kwargs.kwargs.get("nx") is True or (
+        len(call_kwargs.args) > 3 and call_kwargs.args[3] is True
+    )
+
+
+def test_stream_chat_dedup_skipped_for_non_user_messages(
+    mocker: pytest_mock.MockFixture,
+) -> None:
+    """System/assistant messages (is_user_message=False) bypass the dedup
+    guard — they are injected programmatically and must always be processed."""
+    mock_redis = _mock_stream_internals(mocker, redis_set_returns=None)
+
+    response = client.post(
+        "/sessions/sess-sys/stream",
+        json={"message": "system context", "is_user_message": False},
+    )
+
+    # Even though redis_set_returns=None (would block a user message),
+    # the endpoint must proceed because is_user_message=False.
+    assert response.status_code == 200
+    mock_redis.set.assert_not_called()

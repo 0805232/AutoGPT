@@ -1,6 +1,7 @@
 """Chat API routes for chat session management and streaming via SSE."""
 
 import asyncio
+import hashlib
 import logging
 import re
 from collections.abc import AsyncGenerator
@@ -837,6 +838,37 @@ async def stream_chat_post(
                     + "\nUse read_workspace_file with the file_id to access file contents."
                 )
                 request.message += files_block
+
+    # ── Idempotency guard ────────────────────────────────────────────────────
+    # Prevent duplicate executor tasks from concurrent/retry POSTs (e.g. k8s
+    # rolling-deploy retries, nginx upstream retries, rapid double-clicks).
+    # We set a Redis NX key keyed on session_id + message hash with a 30 s TTL.
+    # The first POST wins; any subsequent identical POST within the window gets
+    # an empty SSE stream back so the frontend marks the turn done without
+    # creating a ghost response.
+    if request.message and request.is_user_message:
+        _content_hash = hashlib.sha256(
+            f"{session_id}:{request.message}".encode()
+        ).hexdigest()[:16]
+        _dedup_key = f"chat:msg_dedup:{session_id}:{_content_hash}"
+        _redis = await get_redis_async()
+        _is_new_msg = await _redis.set(_dedup_key, "1", ex=30, nx=True)
+        if not _is_new_msg:
+            logger.warning(
+                f"[STREAM] Duplicate user message blocked for session {session_id}, "
+                f"hash={_content_hash} — returning empty SSE",
+                extra={"json_fields": log_meta},
+            )
+
+            async def _empty_sse() -> AsyncGenerator[str, None]:
+                yield StreamFinish().to_sse()
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(
+                _empty_sse(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
 
     # Atomically append user message to session BEFORE creating task to avoid
     # race condition where GET_SESSION sees task as "running" but message isn't
