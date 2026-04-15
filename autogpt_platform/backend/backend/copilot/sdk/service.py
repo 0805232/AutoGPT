@@ -137,6 +137,11 @@ _MAX_STREAM_ATTEMPTS = 3
 # self-correct.  The limit is generous to allow recovery attempts.
 _EMPTY_TOOL_CALL_LIMIT = 5
 
+# Cost multiplier for Opus model turns — Opus is ~5× more expensive than Sonnet
+# ($15/$75 vs $3/$15 per M tokens).  Applied to rate-limit counters so Opus
+# turns deplete quota proportionally faster.
+_OPUS_COST_MULTIPLIER = 5.0
+
 # User-facing error shown when the empty-tool-call circuit breaker trips.
 _CIRCUIT_BREAKER_ERROR_MSG = (
     "AutoPilot was unable to complete the tool call "
@@ -699,6 +704,61 @@ async def _resolve_user_model_override(user_id: str) -> str | None:
     if not raw or not isinstance(raw, str):
         return None
     return _normalize_model_name(raw)
+
+
+async def _resolve_model_and_multiplier(
+    model: "CopilotLlmModel | None",
+    user_id: str | None,
+    session_id: str,
+) -> tuple[str | None, float]:
+    """Resolve the SDK model string and rate-limit cost multiplier for a turn.
+
+    Priority (highest first):
+    1. Explicit per-request ``model`` tier from the frontend toggle.
+    2. Per-user LaunchDarkly model override (``Flag.COPILOT_MODEL``).
+    3. Global config default (``_resolve_sdk_model()``).
+
+    Returns a ``(sdk_model, cost_multiplier)`` pair.
+    ``sdk_model`` is ``None`` when the Claude Code subscription default applies.
+    ``cost_multiplier`` is 5.0 for Opus, 1.0 otherwise.
+    """
+    sdk_model = _resolve_sdk_model()
+
+    if user_id:
+        user_model_override = await _resolve_user_model_override(user_id)
+        if user_model_override:
+            logger.info(
+                "[SDK] [%s] Per-user model override for user %s: %s (was: %s)",
+                session_id[:12] if session_id else "?",
+                user_id[:8],
+                user_model_override,
+                sdk_model or "subscription-default",
+            )
+            sdk_model = user_model_override
+
+    if model == "advanced":
+        sdk_model = _normalize_model_name("anthropic/claude-opus-4-6")
+        logger.info(
+            "[SDK] [%s] Per-request model override: advanced (%s)",
+            session_id[:12] if session_id else "?",
+            sdk_model,
+        )
+        return sdk_model, _OPUS_COST_MULTIPLIER
+
+    if model == "standard":
+        sdk_model = _normalize_model_name(config.model)
+        logger.info(
+            "[SDK] [%s] Per-request model override: standard (%s)",
+            session_id[:12] if session_id else "?",
+            sdk_model,
+        )
+        return sdk_model, 1.0
+
+    # No per-request override; derive multiplier from final resolved model.
+    cost_multiplier = (
+        _OPUS_COST_MULTIPLIER if sdk_model and "opus" in sdk_model else 1.0
+    )
+    return sdk_model, cost_multiplier
 
 
 _MAX_TRANSIENT_BACKOFF_SECONDS = 30
@@ -2305,6 +2365,10 @@ async def stream_chat_completion_sdk(
     turn_cache_creation_tokens = 0
     turn_cost_usd: float | None = None
     graphiti_enabled = False
+    # Defaults ensure the finally block can always reference these safely even when
+    # an early return (e.g. sdk_cwd error) skips their normal assignment below.
+    sdk_model: str | None = None
+    model_cost_multiplier: float = 1.0
 
     # Make sure there is no more code between the lock acquisition and try-block.
     try:
@@ -2516,48 +2580,10 @@ async def stream_chat_completion_sdk(
 
         mcp_server = create_copilot_mcp_server(use_e2b=use_e2b)
 
-        sdk_model = _resolve_sdk_model()
-
-        # Per-user model override via LaunchDarkly — allows targeting specific
-        # users with a different model (e.g. Opus) without changing global config.
-        if user_id:
-            user_model_override = await _resolve_user_model_override(user_id)
-            if user_model_override:
-                logger.info(
-                    "[SDK] [%s] Per-user model override for user %s: %s (was: %s)",
-                    session_id[:12] if session_id else "?",
-                    user_id[:8],
-                    user_model_override,
-                    sdk_model or "subscription-default",
-                )
-                sdk_model = user_model_override
-
-        # Explicit per-request model tier from frontend toggle — highest priority,
-        # overrides both global config and per-user LD targeting.
-        # 'advanced' → claude-opus-4-6 (5× rate-limit cost vs Sonnet).
-        # 'standard' → config.model (current Sonnet default, 1× cost).
-        # No separate entitlement gate — users self-limit via rate limiting.
-        if model == "advanced":
-            sdk_model = _normalize_model_name("anthropic/claude-opus-4-6")
-            model_cost_multiplier = 5.0  # Opus: $15/$75 vs Sonnet $3/$15 per M tokens
-            logger.info(
-                "[SDK] [%s] Per-request model override: advanced (%s)",
-                session_id[:12] if session_id else "?",
-                sdk_model,
-            )
-        elif model == "standard":
-            sdk_model = _normalize_model_name(config.model)
-            model_cost_multiplier = 1.0
-            logger.info(
-                "[SDK] [%s] Per-request model override: standard (%s)",
-                session_id[:12] if session_id else "?",
-                sdk_model,
-            )
-        else:
-            # No per-request override; derive multiplier from final resolved model.
-            model_cost_multiplier = (
-                5.0 if sdk_model and "opus" in sdk_model else 1.0
-            )
+        # Resolve model and cost multiplier (LD per-user → request tier → config).
+        sdk_model, model_cost_multiplier = await _resolve_model_and_multiplier(
+            model, user_id, session_id
+        )
 
         # Track SDK-internal compaction (PreCompact hook → start, next msg → end)
         compaction = CompactionTracker()

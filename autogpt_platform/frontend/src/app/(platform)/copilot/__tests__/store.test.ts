@@ -23,6 +23,7 @@ describe("useCopilotUIStore", () => {
       isSoundEnabled: true,
       showNotificationDialog: false,
       copilotChatMode: "extended_thinking",
+      copilotLlmModel: "standard",
     });
   });
 
@@ -183,6 +184,7 @@ describe("useCopilotUIStore", () => {
   describe("clearCopilotLocalData", () => {
     it("resets state and clears localStorage keys", () => {
       useCopilotUIStore.getState().setCopilotChatMode("fast");
+      useCopilotUIStore.getState().setCopilotLlmModel("advanced");
       useCopilotUIStore.getState().setNotificationsEnabled(true);
       useCopilotUIStore.getState().toggleSound();
       useCopilotUIStore.getState().addCompletedSession("s1");
@@ -191,6 +193,7 @@ describe("useCopilotUIStore", () => {
 
       const state = useCopilotUIStore.getState();
       expect(state.copilotChatMode).toBe("extended_thinking");
+      expect(state.copilotLlmModel).toBe("standard");
       expect(state.isNotificationsEnabled).toBe(false);
       expect(state.isSoundEnabled).toBe(true);
       expect(state.completedSessionIDs.size).toBe(0);
