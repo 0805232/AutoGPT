@@ -29,23 +29,26 @@ export function EditNameDialog({ currentName }: Props) {
     if (!trimmed || !supabase) return;
 
     setIsSaving(true);
-    const { error } = await supabase.auth.updateUser({
-      data: { full_name: trimmed },
-    });
-    setIsSaving(false);
-
-    if (error) {
-      toast({
-        title: "Failed to update name",
-        description: error.message,
-        variant: "destructive",
+    try {
+      const { error } = await supabase.auth.updateUser({
+        data: { full_name: trimmed },
       });
-      return;
-    }
 
-    await refreshSession();
-    setIsOpen(false);
-    toast({ title: "Name updated" });
+      if (error) {
+        toast({
+          title: "Failed to update name",
+          description: error.message,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      await refreshSession();
+      setIsOpen(false);
+      toast({ title: "Name updated" });
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
