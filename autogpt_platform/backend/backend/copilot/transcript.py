@@ -55,7 +55,9 @@ TranscriptMode = Literal["sdk", "baseline"]
 class TranscriptDownload:
     content: bytes
     message_count: int = 0
-    mode: TranscriptMode = "sdk"  # "sdk" = Claude CLI native, "baseline" = TranscriptBuilder
+    mode: TranscriptMode = (
+        "sdk"  # "sdk" = Claude CLI native, "baseline" = TranscriptBuilder
+    )
 
 
 # Storage prefix for the CLI's native session JSONL files (for cross-pod --resume).
@@ -699,12 +701,26 @@ async def upload_transcript(
         ),
         return_exceptions=True,
     )
-    if isinstance(session_result, Exception):
+    if isinstance(session_result, BaseException):
         logger.warning(
             "%s Failed to upload CLI session file: %s", log_prefix, session_result
         )
+        # Roll back the companion meta to avoid pairing a stale session with a
+        # fresh watermark on the next restore.  Best-effort — if this also fails
+        # the next restore will find a meta with no matching session (FileNotFoundError
+        # on the session bytes) and return None, so no data corruption can occur.
+        if not isinstance(meta_result, BaseException):
+            try:
+                meta_path = _build_path_from_parts(
+                    _cli_session_meta_path_parts(user_id, session_id), storage
+                )
+                await storage.delete(meta_path)
+            except Exception as rollback_err:
+                logger.debug(
+                    "%s Meta rollback failed (harmless): %s", log_prefix, rollback_err
+                )
         return
-    if isinstance(meta_result, Exception):
+    if isinstance(meta_result, BaseException):
         logger.warning(
             "%s Failed to upload CLI session meta: %s", log_prefix, meta_result
         )
@@ -762,10 +778,20 @@ async def download_transcript(
     elif isinstance(meta_result, BaseException):
         logger.debug("%s Failed to load CLI session meta: %s", log_prefix, meta_result)
     else:
-        meta = json.loads(meta_result.decode("utf-8"), fallback={})
-        message_count = meta.get("message_count", 0)
-        raw_mode = meta.get("mode", "sdk")
-        mode = raw_mode if raw_mode in ("sdk", "baseline") else "sdk"
+        try:
+            meta_str = meta_result.decode("utf-8")
+        except UnicodeDecodeError:
+            logger.debug("%s CLI session meta is not valid UTF-8, ignoring", log_prefix)
+            meta_str = None
+        if meta_str is not None:
+            meta = json.loads(meta_str, fallback={})
+            if isinstance(meta, dict):
+                raw_count = meta.get("message_count", 0)
+                message_count = (
+                    raw_count if isinstance(raw_count, int) and raw_count >= 0 else 0
+                )
+                raw_mode = meta.get("mode", "sdk")
+                mode = raw_mode if raw_mode in ("sdk", "baseline") else "sdk"
 
     logger.info(
         "%s Downloaded CLI session (%dB, msg_count=%d)",

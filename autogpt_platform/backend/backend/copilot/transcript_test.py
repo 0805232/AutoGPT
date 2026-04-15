@@ -801,7 +801,33 @@ class TestUploadCliSession:
                 )
             )
 
+    def test_rolls_back_meta_when_session_upload_fails(self):
+        """When session upload fails but meta succeeded, meta is rolled back."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
 
+        from .transcript import upload_transcript
+
+        mock_storage = AsyncMock()
+        # session store fails, meta store succeeds → rollback delete should be called
+        mock_storage.store.side_effect = [RuntimeError("gcs unavailable"), None]
+        content = b'{"type":"assistant"}\n'
+
+        with patch(
+            "backend.copilot.transcript.get_workspace_storage",
+            new_callable=AsyncMock,
+            return_value=mock_storage,
+        ):
+            asyncio.run(
+                upload_transcript(
+                    user_id="user-1",
+                    session_id="12345678-0000-0000-0000-000000000099",
+                    content=content,
+                )
+            )
+
+        # delete should be called once for the meta rollback
+        mock_storage.delete.assert_called_once()
 
 
 class TestRestoreCliSession:
@@ -872,7 +898,9 @@ class TestRestoreCliSession:
 
         session_id = "12345678-0000-0000-0000-000000000005"
         content = b'{"type":"assistant"}\n'
-        meta_bytes = json.dumps({"message_count": 7, "mode": "sdk", "uploaded_at": 1234567.0}).encode()
+        meta_bytes = json.dumps(
+            {"message_count": 7, "mode": "sdk", "uploaded_at": 1234567.0}
+        ).encode()
 
         mock_storage = AsyncMock()
         mock_storage.retrieve.side_effect = [content, meta_bytes]

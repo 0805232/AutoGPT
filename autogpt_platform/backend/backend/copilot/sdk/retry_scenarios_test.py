@@ -1001,7 +1001,9 @@ def _make_sdk_patches(
             dict(
                 new_callable=AsyncMock,
                 return_value=TranscriptDownload(
-                    content=original_transcript.encode("utf-8"), message_count=2, mode="sdk"
+                    content=original_transcript.encode("utf-8"),
+                    message_count=2,
+                    mode="sdk",
                 ),
             ),
         ),

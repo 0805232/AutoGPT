@@ -94,11 +94,9 @@ from ..tracking import track_user_message
 from ..transcript import (
     _run_compression,
     TranscriptDownload,
-    TranscriptMode,
     cleanup_stale_project_dirs,
     cli_session_path,
     compact_transcript,
-    detect_gap,
     download_transcript,
     projects_base,
     read_compacted_entries,
@@ -916,11 +914,16 @@ def _read_cli_session_from_disk(
         logger.debug(
             "%s CLI session file not found, skipping upload: %s",
             log_prefix,
-            session_file,
+            os.path.basename(session_file),
         )
         return None
     except OSError as e:
-        logger.warning("%s Failed to read CLI session file: %s", log_prefix, e)
+        logger.warning(
+            "%s Failed to read CLI session file %s: %s",
+            log_prefix,
+            os.path.basename(session_file),
+            e,
+        )
         return None
 
     # Strip stale thinking blocks and metadata entries before uploading.
@@ -966,7 +969,9 @@ def _process_cli_restore(
     try:
         raw_str = cli_restore.content.decode("utf-8")
     except UnicodeDecodeError:
-        logger.warning("%s CLI session content is not valid UTF-8, skipping", log_prefix)
+        logger.warning(
+            "%s CLI session content is not valid UTF-8, skipping", log_prefix
+        )
         return "", False
 
     stripped = strip_for_upload(raw_str)
@@ -986,7 +991,8 @@ def _process_cli_restore(
         )
         return "", False
 
-    if not _write_cli_session_to_disk(cli_restore.content, sdk_cwd, session_id, log_prefix):
+    stripped_bytes = stripped.encode("utf-8")
+    if not _write_cli_session_to_disk(stripped_bytes, sdk_cwd, session_id, log_prefix):
         return "", False
 
     return stripped, True
@@ -2654,8 +2660,12 @@ async def stream_chat_completion_sdk(
                             "%s Removed stale local CLI session file for clean fallback",
                             log_prefix,
                         )
-                    except OSError:
-                        pass
+                    except OSError as _unlink_err:
+                        logger.debug(
+                            "%s Failed to remove stale local session file: %s",
+                            log_prefix,
+                            _unlink_err,
+                        )
 
             if cli_restore is not None:
                 transcript_content = stripped
@@ -2667,7 +2677,36 @@ async def stream_chat_completion_sdk(
                 # No CLI session in GCS — reconstruct from DB messages as last-resort fallback.
                 prior = session.messages[:-1]
                 reconstructed = _session_messages_to_transcript(prior)
-                if reconstructed:
+                if reconstructed and sdk_cwd:
+                    transcript_content = reconstructed
+                    transcript_builder.load_previous(
+                        reconstructed, log_prefix=log_prefix
+                    )
+                    transcript_msg_count = len(prior)
+                    transcript_covers_prefix = True
+                    # Write the reconstructed transcript to disk so the CLI can
+                    # --resume on this turn (avoids context-free response and
+                    # seeds the native session for cross-pod restore next turn).
+                    _reconstructed_bytes = reconstructed.encode("utf-8")
+                    if _write_cli_session_to_disk(
+                        _reconstructed_bytes, sdk_cwd, session_id, log_prefix
+                    ):
+                        use_resume = True
+                        resume_file = session_id
+                        logger.info(
+                            "%s Reconstructed transcript from %d session messages "
+                            "and wrote to disk for --resume",
+                            log_prefix,
+                            len(prior),
+                        )
+                    else:
+                        logger.info(
+                            "%s Reconstructed transcript from %d session messages "
+                            "(disk write failed — running without --resume this turn)",
+                            log_prefix,
+                            len(prior),
+                        )
+                elif reconstructed:
                     transcript_content = reconstructed
                     transcript_builder.load_previous(
                         reconstructed, log_prefix=log_prefix
@@ -2676,7 +2715,7 @@ async def stream_chat_completion_sdk(
                     transcript_covers_prefix = True
                     logger.info(
                         "%s Reconstructed transcript from %d session messages "
-                        "(no CLI session — running without --resume this turn)",
+                        "(no sdk_cwd — running without --resume this turn)",
                         log_prefix,
                         len(prior),
                     )

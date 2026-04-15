@@ -1368,3 +1368,86 @@ class TestStripStaleThinkingBlocks:
         # Both entries of last turn (msg_last) preserved
         assert lines[1]["message"]["content"][0]["type"] == "thinking"
         assert lines[2]["message"]["content"][0]["type"] == "text"
+
+
+class TestProcessCliRestore:
+    """``_process_cli_restore`` validates, strips, and writes CLI session to disk."""
+
+    def test_writes_stripped_bytes_not_raw(self, tmp_path):
+        """Stripped bytes (not raw bytes) must be written to disk for --resume."""
+        import os
+        import re
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from backend.copilot.sdk.service import _process_cli_restore
+        from backend.copilot.transcript import TranscriptDownload
+
+        session_id = "12345678-0000-0000-0000-abcdef000001"
+        sdk_cwd = str(tmp_path)
+        projects_base_dir = str(tmp_path)
+
+        # Build raw content with a strippable progress entry + a valid user/assistant pair
+        raw_content = (
+            '{"type":"progress","uuid":"p1","subtype":"agent_progress","parentUuid":null}\n'
+            '{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"hi"}}\n'
+            '{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}\n'
+        )
+        raw_bytes = raw_content.encode("utf-8")
+        restore = TranscriptDownload(content=raw_bytes, message_count=2, mode="sdk")
+
+        with (
+            patch(
+                "backend.copilot.sdk.service.projects_base",
+                return_value=projects_base_dir,
+            ),
+            patch(
+                "backend.copilot.transcript.projects_base",
+                return_value=projects_base_dir,
+            ),
+        ):
+            stripped_str, ok = _process_cli_restore(
+                restore, sdk_cwd, session_id, "[Test]"
+            )
+
+        assert ok, "Expected successful restore"
+
+        # Find the written session file
+        encoded_cwd = re.sub(r"[^a-zA-Z0-9]", "-", os.path.realpath(sdk_cwd))
+        session_file = Path(projects_base_dir) / encoded_cwd / f"{session_id}.jsonl"
+        assert session_file.exists(), "Session file should have been written"
+
+        written_bytes = session_file.read_bytes()
+        # The written bytes must be the stripped version (no progress entry)
+        assert (
+            b"progress" not in written_bytes
+        ), "Raw bytes with progress entry should not have been written"
+        assert (
+            b"hello" in written_bytes
+        ), "Stripped content should still contain assistant turn"
+
+        # Written bytes must equal the stripped string re-encoded
+        assert written_bytes == stripped_str.encode(
+            "utf-8"
+        ), "Written bytes must equal stripped content"
+
+    def test_invalid_content_returns_false(self):
+        """Content that fails validation after strip returns (empty, False)."""
+        from backend.copilot.sdk.service import _process_cli_restore
+        from backend.copilot.transcript import TranscriptDownload
+
+        # A single progress-only entry — stripped result will be empty/invalid
+        raw_content = '{"type":"progress","uuid":"p1","subtype":"agent_progress","parentUuid":null}\n'
+        restore = TranscriptDownload(
+            content=raw_content.encode("utf-8"), message_count=1, mode="sdk"
+        )
+
+        stripped_str, ok = _process_cli_restore(
+            restore,
+            "/tmp/nonexistent-sdk-cwd",
+            "12345678-0000-0000-0000-000000000099",
+            "[Test]",
+        )
+
+        assert not ok
+        assert stripped_str == ""

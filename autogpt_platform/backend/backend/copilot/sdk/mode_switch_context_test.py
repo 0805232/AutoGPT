@@ -253,10 +253,7 @@ class TestSdkToFastModeSwitch:
         """Scenario S: SDK-written CLI session is accepted by baseline's load helper."""
         from backend.copilot.baseline.service import _load_prior_transcript
         from backend.copilot.model import ChatMessage
-        from backend.copilot.transcript import (
-            STOP_REASON_END_TURN,
-            TranscriptDownload,
-        )
+        from backend.copilot.transcript import STOP_REASON_END_TURN, TranscriptDownload
         from backend.copilot.transcript_builder import TranscriptBuilder
 
         # Build a minimal valid transcript as SDK mode would write it.
@@ -305,10 +302,7 @@ class TestSdkToFastModeSwitch:
         """
         from backend.copilot.baseline.service import _load_prior_transcript
         from backend.copilot.model import ChatMessage
-        from backend.copilot.transcript import (
-            STOP_REASON_END_TURN,
-            TranscriptDownload,
-        )
+        from backend.copilot.transcript import STOP_REASON_END_TURN, TranscriptDownload
         from backend.copilot.transcript_builder import TranscriptBuilder
 
         builder_sdk = TranscriptBuilder()

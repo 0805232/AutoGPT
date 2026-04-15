@@ -56,7 +56,9 @@ def _make_transcript_content(*roles: str) -> str:
 
 def _make_session_messages(*roles: str) -> list[ChatMessage]:
     """Build a list of ChatMessage objects matching the given roles."""
-    return [ChatMessage(role=r, content=f"{r} message {i}") for i, r in enumerate(roles)]
+    return [
+        ChatMessage(role=r, content=f"{r} message {i}") for i, r in enumerate(roles)
+    ]
 
 
 class TestResolveBaselineModel:
@@ -84,7 +86,9 @@ class TestLoadPriorTranscript:
     async def test_loads_fresh_transcript(self):
         builder = TranscriptBuilder()
         content = _make_transcript_content("user", "assistant")
-        restore = TranscriptDownload(content=content.encode("utf-8"), message_count=2, mode="sdk")
+        restore = TranscriptDownload(
+            content=content.encode("utf-8"), message_count=2, mode="sdk"
+        )
 
         with patch(
             "backend.copilot.baseline.service.download_transcript",
@@ -107,7 +111,9 @@ class TestLoadPriorTranscript:
         builder = TranscriptBuilder()
         content = _make_transcript_content("user", "assistant")
         # transcript covers 2 messages, session has 4 (plus current user turn = 5)
-        restore = TranscriptDownload(content=content.encode("utf-8"), message_count=2, mode="baseline")
+        restore = TranscriptDownload(
+            content=content.encode("utf-8"), message_count=2, mode="baseline"
+        )
 
         with patch(
             "backend.copilot.baseline.service.download_transcript",
@@ -116,7 +122,9 @@ class TestLoadPriorTranscript:
             covers = await _load_prior_transcript(
                 user_id="user-1",
                 session_id="session-1",
-                session_messages=_make_session_messages("user", "assistant", "user", "assistant", "user"),
+                session_messages=_make_session_messages(
+                    "user", "assistant", "user", "assistant", "user"
+                ),
                 transcript_builder=builder,
             )
 
@@ -382,7 +390,9 @@ class TestRoundTrip:
     @pytest.mark.asyncio
     async def test_full_round_trip(self):
         prior = _make_transcript_content("user", "assistant")
-        restore = TranscriptDownload(content=prior.encode("utf-8"), message_count=2, mode="sdk")
+        restore = TranscriptDownload(
+            content=prior.encode("utf-8"), message_count=2, mode="sdk"
+        )
 
         builder = TranscriptBuilder()
         with patch(
@@ -500,7 +510,9 @@ class TestTranscriptLifecycle:
         """Fresh restore, append a turn, upload covers the session."""
         builder = TranscriptBuilder()
         prior = _make_transcript_content("user", "assistant")
-        restore = TranscriptDownload(content=prior.encode("utf-8"), message_count=2, mode="sdk")
+        restore = TranscriptDownload(
+            content=prior.encode("utf-8"), message_count=2, mode="sdk"
+        )
 
         upload_mock = AsyncMock(return_value=None)
         with (

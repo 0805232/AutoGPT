@@ -26,7 +26,6 @@ from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolPara
 from opentelemetry import trace as otel_trace
 
 from backend.copilot.config import CopilotMode
-from backend.util import json as util_json
 from backend.copilot.context import get_workspace_manager, set_execution_context
 from backend.copilot.graphiti.config import is_enabled_for_user
 from backend.copilot.model import (
@@ -74,6 +73,7 @@ from backend.copilot.transcript import (
     validate_transcript,
 )
 from backend.copilot.transcript_builder import TranscriptBuilder
+from backend.util import json as util_json
 from backend.util.exceptions import NotFoundError
 from backend.util.prompt import (
     compress_context,
@@ -733,9 +733,7 @@ def _append_gap_to_builder(
             if msg.tool_calls:
                 for tc in msg.tool_calls:
                     fn = tc.get("function", {}) if isinstance(tc, dict) else {}
-                    input_data = util_json.loads(
-                        fn.get("arguments", "{}"), fallback={}
-                    )
+                    input_data = util_json.loads(fn.get("arguments", "{}"), fallback={})
                     content_blocks.append(
                         {
                             "type": "tool_use",
