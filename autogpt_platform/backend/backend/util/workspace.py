@@ -220,20 +220,19 @@ class WorkspaceManager:
                 f"({projected_usage} / {storage_limit} bytes)"
             )
 
-        # Scan here — callers must NOT duplicate this scan.
-        # WorkspaceManager owns virus scanning for all persisted files.
-        await scan_content_safe(content, filename=filename)
-
-        # Check if file exists at path (only error for non-overwrite case)
-        # For overwrite=True, we let the write proceed and handle via UniqueViolationError
-        # This ensures the new file is written to storage BEFORE the old one is deleted,
-        # preventing data loss if the new write fails
+        # Check if file exists at path (only error for non-overwrite case).
+        # Done before virus scanning so a cheap duplicate-path check isn't
+        # blocked by a potentially slow or unavailable scanner.
         db = workspace_db()
 
         if not overwrite:
             existing = await db.get_workspace_file_by_path(self.workspace_id, path)
             if existing is not None:
                 raise ValueError(f"File already exists at path: {path}")
+
+        # Scan here — callers must NOT duplicate this scan.
+        # WorkspaceManager owns virus scanning for all persisted files.
+        await scan_content_safe(content, filename=filename)
 
         # Auto-detect MIME type if not provided
         if mime_type is None:
