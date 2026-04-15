@@ -1385,8 +1385,14 @@ async def get_proration_credit_cents(user_id: str, monthly_cost_cents: int) -> i
     """
     if monthly_cost_cents <= 0:
         return 0
+    # Guard: only query Stripe if the user already has a customer ID.  Admin-granted
+    # paid tiers have no Stripe record; calling get_stripe_customer_id would create an
+    # orphaned customer on every billing-page load for those users.
+    user = await get_user_by_id(user_id)
+    if not user.stripe_customer_id:
+        return 0
     try:
-        customer_id = await get_stripe_customer_id(user_id)
+        customer_id = user.stripe_customer_id
         subscriptions = await run_in_threadpool(
             stripe.Subscription.list, customer=customer_id, status="active", limit=1
         )
