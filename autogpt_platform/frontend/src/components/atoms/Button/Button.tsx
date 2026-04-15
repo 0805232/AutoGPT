@@ -21,6 +21,7 @@ export function Button(props: ButtonProps) {
     children,
     as = "button",
     unmask = true,
+    asChild: _asChild, // Destructure to prevent passing to DOM
     ...restProps
   } = props;
 

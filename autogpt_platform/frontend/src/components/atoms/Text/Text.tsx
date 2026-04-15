@@ -1,4 +1,5 @@
 import React from "react";
+import { cn } from "@/lib/utils";
 import { As, Variant, variantElementMap, variants } from "./helpers";
 
 type CustomProps = {
@@ -31,6 +32,7 @@ export function Text({
   const combinedClassName = `${variantClasses} ${
     unmask ? "sentry-unmask" : ""
   } ${className}`.trim();
+  const combinedClassName = cn(variantClasses, className);
 
   return React.createElement(
     Element,
