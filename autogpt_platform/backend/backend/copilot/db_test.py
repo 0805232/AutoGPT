@@ -175,6 +175,133 @@ async def test_no_where_on_messages_without_before_sequence(
     assert "where" not in include["Messages"]
 
 
+# ---------- Forward pagination (from_start / after_sequence) ----------
+
+
+@pytest.mark.asyncio
+async def test_from_start_uses_asc_order_no_where(
+    mock_db: tuple[AsyncMock, AsyncMock],
+):
+    """from_start=True queries messages in ASC order with no where filter."""
+    find_first, _ = mock_db
+    find_first.return_value = _make_session(
+        messages=[_make_msg(0), _make_msg(1), _make_msg(2)],
+    )
+
+    await get_chat_messages_paginated(SESSION_ID, limit=50, from_start=True)
+
+    call_kwargs = find_first.call_args
+    include = call_kwargs.kwargs.get("include") or call_kwargs[1].get("include")
+    assert include["Messages"]["order_by"] == {"sequence": "asc"}
+    assert "where" not in include["Messages"]
+
+
+@pytest.mark.asyncio
+async def test_from_start_returns_messages_ascending(
+    mock_db: tuple[AsyncMock, AsyncMock],
+):
+    """from_start=True returns messages in ascending sequence order."""
+    find_first, _ = mock_db
+    find_first.return_value = _make_session(
+        messages=[_make_msg(0), _make_msg(1), _make_msg(2)],
+    )
+
+    page = await get_chat_messages_paginated(SESSION_ID, limit=50, from_start=True)
+
+    assert page is not None
+    assert [m.sequence for m in page.messages] == [0, 1, 2]
+    assert page.oldest_sequence == 0
+    assert page.newest_sequence == 2
+    assert page.has_more is False
+
+
+@pytest.mark.asyncio
+async def test_from_start_has_more_when_results_exceed_limit(
+    mock_db: tuple[AsyncMock, AsyncMock],
+):
+    """from_start=True sets has_more when DB returns more than limit items."""
+    find_first, _ = mock_db
+    find_first.return_value = _make_session(
+        messages=[_make_msg(0), _make_msg(1), _make_msg(2)],
+    )
+
+    page = await get_chat_messages_paginated(SESSION_ID, limit=2, from_start=True)
+
+    assert page is not None
+    assert page.has_more is True
+    assert [m.sequence for m in page.messages] == [0, 1]
+    assert page.newest_sequence == 1
+
+
+@pytest.mark.asyncio
+async def test_after_sequence_uses_gt_filter_asc_order(
+    mock_db: tuple[AsyncMock, AsyncMock],
+):
+    """after_sequence adds a sequence > N where clause and uses ASC order."""
+    find_first, _ = mock_db
+    find_first.return_value = _make_session(
+        messages=[_make_msg(11), _make_msg(12)],
+    )
+
+    await get_chat_messages_paginated(SESSION_ID, limit=50, after_sequence=10)
+
+    call_kwargs = find_first.call_args
+    include = call_kwargs.kwargs.get("include") or call_kwargs[1].get("include")
+    assert include["Messages"]["order_by"] == {"sequence": "asc"}
+    assert include["Messages"]["where"] == {"sequence": {"gt": 10}}
+
+
+@pytest.mark.asyncio
+async def test_after_sequence_returns_messages_in_order(
+    mock_db: tuple[AsyncMock, AsyncMock],
+):
+    """after_sequence returns only messages with sequence > cursor, ascending."""
+    find_first, _ = mock_db
+    find_first.return_value = _make_session(
+        messages=[_make_msg(11), _make_msg(12), _make_msg(13)],
+    )
+
+    page = await get_chat_messages_paginated(SESSION_ID, limit=50, after_sequence=10)
+
+    assert page is not None
+    assert [m.sequence for m in page.messages] == [11, 12, 13]
+    assert page.oldest_sequence == 11
+    assert page.newest_sequence == 13
+    assert page.has_more is False
+
+
+@pytest.mark.asyncio
+async def test_newest_sequence_populated_for_backward_mode(
+    mock_db: tuple[AsyncMock, AsyncMock],
+):
+    """newest_sequence is populated for backward-paginated results."""
+    find_first, _ = mock_db
+    find_first.return_value = _make_session(
+        messages=[_make_msg(5), _make_msg(4), _make_msg(3)],
+    )
+
+    page = await get_chat_messages_paginated(SESSION_ID, limit=50)
+
+    assert page is not None
+    assert page.newest_sequence == 5
+    assert page.oldest_sequence == 3
+
+
+@pytest.mark.asyncio
+async def test_forward_mode_no_boundary_expansion(
+    mock_db: tuple[AsyncMock, AsyncMock],
+):
+    """Forward pagination never triggers backward boundary expansion."""
+    find_first, find_many = mock_db
+    find_first.return_value = _make_session(
+        messages=[_make_msg(0, role="tool"), _make_msg(1, role="tool")],
+    )
+
+    await get_chat_messages_paginated(SESSION_ID, limit=50, from_start=True)
+
+    assert find_many.call_count == 0
+
+
 @pytest.mark.asyncio
 async def test_user_id_filter_applied_to_session_where(
     mock_db: tuple[AsyncMock, AsyncMock],

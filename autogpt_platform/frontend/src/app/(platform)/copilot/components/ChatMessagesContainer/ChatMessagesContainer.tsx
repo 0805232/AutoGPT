@@ -42,6 +42,10 @@ interface Props {
   hasMoreMessages?: boolean;
   isLoadingMore?: boolean;
   onLoadMore?: () => void;
+  /** When true the load-more sentinel is placed at the bottom (forward
+   *  pagination for completed sessions). When false it is at the top
+   *  (backward pagination for active sessions). */
+  forwardPaginated?: boolean;
   onRetry?: () => void;
   historicalDurations?: Map<string, number>;
 }
@@ -205,6 +209,7 @@ export function ChatMessagesContainer({
   hasMoreMessages,
   isLoadingMore,
   onLoadMore,
+  forwardPaginated,
   onRetry,
   historicalDurations,
 }: Props) {
@@ -283,7 +288,7 @@ export function ChatMessagesContainer({
       }
     >
       <ConversationContent className="flex min-h-full flex-1 flex-col gap-6 px-3 py-6">
-        {hasMoreMessages && onLoadMore && (
+        {hasMoreMessages && onLoadMore && !forwardPaginated && (
           <LoadMoreSentinel
             hasMore={hasMoreMessages}
             isLoading={!!isLoadingMore}
@@ -441,6 +446,14 @@ export function ChatMessagesContainer({
               {error instanceof Error ? error.message : String(error)}
             </pre>
           </details>
+        )}
+        {hasMoreMessages && onLoadMore && forwardPaginated && (
+          <LoadMoreSentinel
+            hasMore={hasMoreMessages}
+            isLoading={!!isLoadingMore}
+            messageCount={messages.length}
+            onLoadMore={onLoadMore}
+          />
         )}
       </ConversationContent>
       <ConversationScrollButton />

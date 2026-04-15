@@ -56,6 +56,8 @@ export function useCopilotPage() {
     hasActiveStream,
     hasMoreMessages,
     oldestSequence,
+    newestSequence,
+    forwardPaginated,
     isLoadingSession,
     isSessionError,
     createSession,
@@ -83,18 +85,26 @@ export function useCopilotPage() {
     copilotModel: isModeToggleEnabled ? copilotLlmModel : undefined,
   });
 
-  const { olderMessages, hasMore, isLoadingMore, loadMore } =
+  const { pagedMessages, hasMore, isLoadingMore, loadMore } =
     useLoadMoreMessages({
       sessionId,
       initialOldestSequence: oldestSequence,
+      initialNewestSequence: newestSequence,
       initialHasMore: hasMoreMessages,
+      forwardPaginated,
       initialPageRawMessages: rawSessionMessages,
     });
 
-  // Combine older (paginated) messages with current page messages,
-  // merging consecutive assistant UIMessages at the page boundary so
-  // reasoning + response parts stay in a single bubble.
-  const messages = concatWithAssistantMerge(olderMessages, currentMessages);
+  // Combine paginated messages with current page messages, merging consecutive
+  // assistant UIMessages at the page boundary so reasoning + response parts
+  // stay in a single bubble.
+  // Forward pagination (completed sessions): current page is the beginning,
+  // paged messages are newer pages appended after.
+  // Backward pagination (active sessions): paged messages are older history
+  // prepended before the current page.
+  const messages = forwardPaginated
+    ? concatWithAssistantMerge(currentMessages, pagedMessages)
+    : concatWithAssistantMerge(pagedMessages, currentMessages);
 
   useCopilotNotifications(sessionId);
 
@@ -396,6 +406,7 @@ export function useCopilotPage() {
     hasMoreMessages: hasMore,
     isLoadingMore,
     loadMore,
+    forwardPaginated,
     // Mobile drawer
     isMobile,
     isDrawerOpen,
