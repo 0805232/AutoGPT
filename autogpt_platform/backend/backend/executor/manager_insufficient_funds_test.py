@@ -5,7 +5,7 @@ from prisma.enums import NotificationType
 
 from backend.data.notifications import ZeroBalanceData
 from backend.executor import billing
-from backend.executor.manager import (
+from backend.executor.billing import (
     INSUFFICIENT_FUNDS_NOTIFIED_PREFIX,
     clear_insufficient_funds_notifications,
 )

@@ -19,7 +19,7 @@ from sentry_sdk.api import flush as _sentry_flush
 from sentry_sdk.api import get_current_scope as _sentry_get_current_scope
 
 from backend.blocks import get_block
-from backend.blocks._base import Block, BlockSchema
+from backend.blocks._base import BlockSchema
 from backend.blocks.agent import AgentExecutorBlock
 from backend.blocks.mcp.block import MCPToolBlock
 from backend.data import redis_client as redis
@@ -111,11 +111,6 @@ pool_size_gauge = Gauge(
 utilization_gauge = Gauge(
     "execution_manager_utilization_ratio",
     "Ratio of active graph runs to max graph workers",
-)
-
-from .billing import (
-    INSUFFICIENT_FUNDS_NOTIFIED_PREFIX,
-    clear_insufficient_funds_notifications,
 )
 
 
