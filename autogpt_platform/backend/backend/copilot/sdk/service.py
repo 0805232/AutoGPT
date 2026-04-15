@@ -1108,37 +1108,9 @@ async def _build_query_message(
         return current_message, False
 
     elif not use_resume and msg_count > 1:
-        if transcript_msg_count > 0:
-            # A compressed transcript exists (downloaded or seeded from DB)
-            # but the CLI native session was unavailable.  Try gap-only first
-            # (efficient: only inject new messages since the transcript end).
-            gap = prior[transcript_msg_count:]
-            if gap:
-                compressed, was_compressed = await _compress_messages(
-                    gap, target_tokens
-                )
-                gap_context = _format_conversation_context(compressed)
-                if gap_context:
-                    logger.info(
-                        "[SDK] [%s] Transcript-aware fallback:"
-                        " gap=%d msgs, context_bytes=%d",
-                        session_id[:8],
-                        len(gap),
-                        len(gap_context),
-                    )
-                    return (
-                        f"{gap_context}\n\nNow, the user says:\n{current_message}",
-                        was_compressed,
-                    )
-            # Gap empty — transcript is current but we have no --resume.
-            # Fall through to compress full session so the model has context.
-            logger.info(
-                "[SDK] [%s] Transcript-aware fallback: gap empty,"
-                " compressing full session for context injection",
-                session_id[:8],
-            )
-
-        # No transcript at all, OR gap was empty: compress full prior session.
+        # No --resume: the CLI starts a fresh session with no prior context.
+        # Injecting only the post-transcript gap would omit the transcript-covered
+        # prefix entirely, so always compress the full prior session here.
         # compress_context handles size reduction internally (LLM summarize →
         # content truncate → middle-out delete → first/last trim).
         logger.warning(
