@@ -859,7 +859,12 @@ async def stream_chat_post(
             return StreamingResponse(
                 _empty_sse(),
                 media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "Connection": "keep-alive",
+                    "x-vercel-ai-ui-message-stream": "v1",
+                },
             )
 
     # Atomically append user message to session BEFORE creating task to avoid
