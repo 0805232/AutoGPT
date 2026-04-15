@@ -453,33 +453,41 @@ async def update_session_title_route(
 async def get_session(
     session_id: str,
     user_id: Annotated[str, Security(auth.get_user_id)],
-    limit: int = Query(default=50, ge=1, le=200),
-    before_sequence: int | None = Query(default=None, ge=0),
-    after_sequence: int | None = Query(default=None, ge=0),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of messages to return.",
+    ),
+    before_sequence: int | None = Query(
+        default=None,
+        ge=0,
+        description=(
+            "Backward pagination cursor. Return messages with sequence number "
+            "strictly less than this value. Used by active-session load-more. "
+            "Mutually exclusive with after_sequence."
+        ),
+    ),
+    after_sequence: int | None = Query(
+        default=None,
+        ge=0,
+        description=(
+            "Forward pagination cursor. Return messages with sequence number "
+            "strictly greater than this value. Used by completed-session load-more. "
+            "Mutually exclusive with before_sequence."
+        ),
+    ),
 ) -> SessionDetailResponse:
     """
     Retrieve the details of a specific chat session.
 
     Supports cursor-based pagination via ``limit``, ``before_sequence``, and
-    ``after_sequence``.
+    ``after_sequence``. The two cursor parameters are mutually exclusive.
 
     On the initial load (no cursor provided) of a completed session, messages
     are returned in forward order starting from sequence 0 so the user always
     sees their initial prompt.  Active sessions use the legacy newest-first
     order so streaming context is preserved.
-
-    Args:
-        session_id: The unique identifier for the desired chat session.
-        user_id: The authenticated user's ID.
-        limit: Maximum number of messages to return (1-200, default 50).
-        before_sequence: Return messages with sequence < this value (backward
-            pagination cursor, used by active-session load-more).
-        after_sequence: Return messages with sequence > this value (forward
-            pagination cursor, used by completed-session load-more).
-
-    Returns:
-        SessionDetailResponse: Details for the requested session, including
-            active_stream info and pagination metadata.
     """
     if before_sequence is not None and after_sequence is not None:
         raise HTTPException(
