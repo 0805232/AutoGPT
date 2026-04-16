@@ -755,11 +755,19 @@ def _append_gap_to_builder(
                 # so the builder's entry count matches the gap length.
                 content_blocks.append({"type": "text", "text": ""})
             builder.append_assistant(content_blocks=content_blocks)
-        elif msg.role == "tool" and msg.tool_call_id:
-            builder.append_tool_result(
-                tool_use_id=msg.tool_call_id,
-                content=msg.content or "",
-            )
+        elif msg.role == "tool":
+            if msg.tool_call_id:
+                builder.append_tool_result(
+                    tool_use_id=msg.tool_call_id,
+                    content=msg.content or "",
+                )
+            else:
+                # Malformed tool message — no tool_call_id to link to an
+                # assistant tool_use block.  Skip to avoid an unmatched
+                # tool_result entry in the builder (which would confuse --resume).
+                logger.warning(
+                    "[Baseline] Skipping tool gap message with no tool_call_id"
+                )
 
 
 async def _load_prior_transcript(

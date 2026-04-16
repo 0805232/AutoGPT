@@ -1228,11 +1228,19 @@ def _session_messages_to_transcript(messages: list[ChatMessage]) -> str:
                 )
             if blocks:
                 builder.append_assistant(blocks)
-        elif msg.role == "tool" and msg.tool_call_id:
-            builder.append_tool_result(
-                tool_use_id=msg.tool_call_id,
-                content=msg.content or "",
-            )
+        elif msg.role == "tool":
+            if msg.tool_call_id:
+                builder.append_tool_result(
+                    tool_use_id=msg.tool_call_id,
+                    content=msg.content or "",
+                )
+            else:
+                # Malformed tool message — no tool_call_id to link to an
+                # assistant tool_use block.  Skip to avoid an unmatched
+                # tool_result entry in the builder (which would confuse --resume).
+                logger.warning(
+                    "[SDK] Skipping tool gap message with no tool_call_id"
+                )
     return builder.to_jsonl()
 
 
