@@ -9,6 +9,7 @@ import pytest
 import pytest_mock
 
 from backend.api.features.chat import routes as chat_routes
+from backend.api.features.chat.routes import _strip_injected_context
 from backend.copilot.rate_limit import SubscriptionTier
 
 app = fastapi.FastAPI()
@@ -132,16 +133,23 @@ def test_stream_chat_rejects_too_many_file_ids():
     assert response.status_code == 422
 
 
-def _mock_stream_internals(mocker: pytest_mock.MockFixture):
+def _mock_stream_internals(mocker: pytest_mock.MockerFixture):
     """Mock the async internals of stream_chat_post so tests can exercise
-    validation and enrichment logic without needing Redis/RabbitMQ."""
+    validation and enrichment logic without needing RabbitMQ.
+
+    Returns:
+        A namespace with ``save`` and ``enqueue`` mock objects so
+        callers can make additional assertions about side-effects.
+    """
+    import types
+
     mocker.patch(
         "backend.api.features.chat.routes._validate_and_get_session",
         return_value=None,
     )
-    mocker.patch(
+    mock_save = mocker.patch(
         "backend.api.features.chat.routes.append_and_save_message",
-        return_value=None,
+        return_value=MagicMock(),  # non-None = message was saved (not a duplicate)
     )
     mock_registry = mocker.MagicMock()
     mock_registry.create_session = mocker.AsyncMock(return_value=None)
@@ -149,7 +157,7 @@ def _mock_stream_internals(mocker: pytest_mock.MockFixture):
         "backend.api.features.chat.routes.stream_registry",
         mock_registry,
     )
-    mocker.patch(
+    mock_enqueue = mocker.patch(
         "backend.api.features.chat.routes.enqueue_copilot_turn",
         return_value=None,
     )
@@ -157,9 +165,12 @@ def _mock_stream_internals(mocker: pytest_mock.MockFixture):
         "backend.api.features.chat.routes.track_user_message",
         return_value=None,
     )
+    return types.SimpleNamespace(
+        save=mock_save, enqueue=mock_enqueue, registry=mock_registry
+    )
 
 
-def test_stream_chat_accepts_20_file_ids(mocker: pytest_mock.MockFixture):
+def test_stream_chat_accepts_20_file_ids(mocker: pytest_mock.MockerFixture):
     """Exactly 20 file_ids should be accepted (not rejected by validation)."""
     _mock_stream_internals(mocker)
     # Patch workspace lookup as imported by the routes module
@@ -185,10 +196,33 @@ def test_stream_chat_accepts_20_file_ids(mocker: pytest_mock.MockFixture):
     assert response.status_code == 200
 
 
+# ─── Duplicate message dedup ──────────────────────────────────────────
+
+
+def test_stream_chat_skips_enqueue_for_duplicate_message(
+    mocker: pytest_mock.MockerFixture,
+):
+    """When append_and_save_message returns None (duplicate detected),
+    enqueue_copilot_turn and stream_registry.create_session must NOT be called
+    to avoid double-processing and to prevent overwriting the active stream's
+    turn_id in Redis (which would cause reconnecting clients to miss the response)."""
+    mocks = _mock_stream_internals(mocker)
+    # Override save to return None — signalling a duplicate
+    mocks.save.return_value = None
+
+    response = client.post(
+        "/sessions/sess-1/stream",
+        json={"message": "hello"},
+    )
+    assert response.status_code == 200
+    mocks.enqueue.assert_not_called()
+    mocks.registry.create_session.assert_not_called()
+
+
 # ─── UUID format filtering ─────────────────────────────────────────────
 
 
-def test_file_ids_filters_invalid_uuids(mocker: pytest_mock.MockFixture):
+def test_file_ids_filters_invalid_uuids(mocker: pytest_mock.MockerFixture):
     """Non-UUID strings in file_ids should be silently filtered out
     and NOT passed to the database query."""
     _mock_stream_internals(mocker)
@@ -227,7 +261,7 @@ def test_file_ids_filters_invalid_uuids(mocker: pytest_mock.MockFixture):
 # ─── Cross-workspace file_ids ─────────────────────────────────────────
 
 
-def test_file_ids_scoped_to_workspace(mocker: pytest_mock.MockFixture):
+def test_file_ids_scoped_to_workspace(mocker: pytest_mock.MockerFixture):
     """The batch query should scope to the user's workspace."""
     _mock_stream_internals(mocker)
     mocker.patch(
@@ -256,7 +290,7 @@ def test_file_ids_scoped_to_workspace(mocker: pytest_mock.MockFixture):
 # ─── Rate limit → 429 ─────────────────────────────────────────────────
 
 
-def test_stream_chat_returns_429_on_daily_rate_limit(mocker: pytest_mock.MockFixture):
+def test_stream_chat_returns_429_on_daily_rate_limit(mocker: pytest_mock.MockerFixture):
     """When check_rate_limit raises RateLimitExceeded for daily limit the endpoint returns 429."""
     from backend.copilot.rate_limit import RateLimitExceeded
 
@@ -277,7 +311,9 @@ def test_stream_chat_returns_429_on_daily_rate_limit(mocker: pytest_mock.MockFix
     assert "daily" in response.json()["detail"].lower()
 
 
-def test_stream_chat_returns_429_on_weekly_rate_limit(mocker: pytest_mock.MockFixture):
+def test_stream_chat_returns_429_on_weekly_rate_limit(
+    mocker: pytest_mock.MockerFixture,
+):
     """When check_rate_limit raises RateLimitExceeded for weekly limit the endpoint returns 429."""
     from backend.copilot.rate_limit import RateLimitExceeded
 
@@ -300,7 +336,7 @@ def test_stream_chat_returns_429_on_weekly_rate_limit(mocker: pytest_mock.MockFi
     assert "resets in" in detail
 
 
-def test_stream_chat_429_includes_reset_time(mocker: pytest_mock.MockFixture):
+def test_stream_chat_429_includes_reset_time(mocker: pytest_mock.MockerFixture):
     """The 429 response detail should include the human-readable reset time."""
     from backend.copilot.rate_limit import RateLimitExceeded
 
@@ -579,3 +615,288 @@ class TestStreamChatRequestModeValidation:
 
         req = StreamChatRequest(message="hi")
         assert req.mode is None
+
+
+class TestStripInjectedContext:
+    """Unit tests for `_strip_injected_context` — the GET-side helper that
+    hides the server-injected `<user_context>` block from API responses.
+
+    The strip is intentionally exact-match: it only removes the prefix the
+    inject helper writes (`<user_context>...</user_context>\\n\\n` at the very
+    start of the message). Any drift between writer and reader leaves the raw
+    block visible in the chat history, which is the failure mode this suite
+    documents.
+    """
+
+    @staticmethod
+    def _msg(role: str, content):
+        return {"role": role, "content": content}
+
+    def test_strips_well_formed_prefix(self) -> None:
+
+        original = "<user_context>\nbiz ctx\n</user_context>\n\nhello world"
+        result = _strip_injected_context(self._msg("user", original))
+        assert result["content"] == "hello world"
+
+    def test_passes_through_message_without_prefix(self) -> None:
+
+        result = _strip_injected_context(self._msg("user", "just a question"))
+        assert result["content"] == "just a question"
+
+    def test_only_strips_when_prefix_is_at_start(self) -> None:
+        """An embedded `<user_context>` block later in the message must NOT
+        be stripped — only the leading prefix is server-injected."""
+
+        content = (
+            "I copied this from somewhere: <user_context>\nfoo\n</user_context>\n\n"
+        )
+        result = _strip_injected_context(self._msg("user", content))
+        assert result["content"] == content
+
+    def test_does_not_strip_with_only_single_newline_separator(self) -> None:
+        """The strip regex requires `\\n\\n` after the closing tag — a single
+        newline indicates a different format and must not be touched."""
+
+        content = "<user_context>\nfoo\n</user_context>\nhello"
+        result = _strip_injected_context(self._msg("user", content))
+        assert result["content"] == content
+
+    def test_assistant_messages_pass_through(self) -> None:
+
+        original = "<user_context>\nfoo\n</user_context>\n\nhi"
+        result = _strip_injected_context(self._msg("assistant", original))
+        assert result["content"] == original
+
+    def test_non_string_content_passes_through(self) -> None:
+        """Multimodal / structured content (e.g. list of blocks) is not a
+        string and must not be touched by the strip helper."""
+
+        blocks = [{"type": "text", "text": "hello"}]
+        result = _strip_injected_context(self._msg("user", blocks))
+        assert result["content"] is blocks
+
+    def test_strip_with_multiline_understanding(self) -> None:
+        """The understanding payload spans multiple lines (markdown headings,
+        bullet points). `re.DOTALL` must allow the regex to span them."""
+
+        original = (
+            "<user_context>\n"
+            "# User Business Context\n\n"
+            "## User\nName: Alice\n\n"
+            "## Business\nCompany: Acme\n"
+            "</user_context>\n\nactual question"
+        )
+        result = _strip_injected_context(self._msg("user", original))
+        assert result["content"] == "actual question"
+
+    def test_strip_when_message_is_only_the_prefix(self) -> None:
+        """An empty user message gets injected with just the prefix; the
+        strip should yield an empty string."""
+
+        original = "<user_context>\nctx\n</user_context>\n\n"
+        result = _strip_injected_context(self._msg("user", original))
+        assert result["content"] == ""
+
+    def test_does_not_mutate_original_dict(self) -> None:
+        """The helper must return a copy — the original dict stays intact."""
+        original_content = "<user_context>\nctx\n</user_context>\n\nhello"
+        msg = self._msg("user", original_content)
+        result = _strip_injected_context(msg)
+        assert result["content"] == "hello"
+        assert msg["content"] == original_content
+        assert result is not msg
+
+    def test_no_role_field_does_not_crash(self) -> None:
+
+        msg = {"content": "hello"}
+        result = _strip_injected_context(msg)
+        # Without a role, the helper short-circuits without touching content.
+        assert result["content"] == "hello"
+
+
+# ─── DELETE /sessions/{id}/stream — disconnect listeners ──────────────
+
+
+def test_disconnect_stream_returns_204_and_awaits_registry(
+    mocker: pytest_mock.MockerFixture,
+    test_user_id: str,
+) -> None:
+    mock_session = MagicMock()
+    mocker.patch(
+        "backend.api.features.chat.routes.get_chat_session",
+        new_callable=AsyncMock,
+        return_value=mock_session,
+    )
+    mock_disconnect = mocker.patch(
+        "backend.api.features.chat.routes.stream_registry.disconnect_all_listeners",
+        new_callable=AsyncMock,
+        return_value=2,
+    )
+
+    response = client.delete("/sessions/sess-1/stream")
+
+    assert response.status_code == 204
+    mock_disconnect.assert_awaited_once_with("sess-1")
+
+
+def test_disconnect_stream_returns_404_when_session_missing(
+    mocker: pytest_mock.MockerFixture,
+    test_user_id: str,
+) -> None:
+    mocker.patch(
+        "backend.api.features.chat.routes.get_chat_session",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
+    mock_disconnect = mocker.patch(
+        "backend.api.features.chat.routes.stream_registry.disconnect_all_listeners",
+        new_callable=AsyncMock,
+    )
+
+    response = client.delete("/sessions/unknown-session/stream")
+
+    assert response.status_code == 404
+    mock_disconnect.assert_not_awaited()
+
+
+# ─── GET /sessions/{session_id} — forward/backward pagination ──────────────────
+
+
+def _make_paginated_messages(
+    mocker: pytest_mock.MockerFixture, *, has_more: bool = False
+):
+    """Return a mock PaginatedMessages and configure the DB patch."""
+    from datetime import UTC, datetime
+
+    from backend.copilot.db import PaginatedMessages
+    from backend.copilot.model import ChatMessage, ChatSessionInfo, ChatSessionMetadata
+
+    now = datetime.now(UTC)
+    session_info = ChatSessionInfo(
+        session_id="sess-1",
+        user_id=TEST_USER_ID,
+        usage=[],
+        started_at=now,
+        updated_at=now,
+        metadata=ChatSessionMetadata(),
+    )
+    page = PaginatedMessages(
+        messages=[ChatMessage(role="user", content="hello", sequence=0)],
+        has_more=has_more,
+        oldest_sequence=0,
+        newest_sequence=0,
+        session=session_info,
+    )
+    mock_paginate = mocker.patch(
+        "backend.api.features.chat.routes.get_chat_messages_paginated",
+        new_callable=AsyncMock,
+        return_value=page,
+    )
+    return page, mock_paginate
+
+
+def test_get_session_completed_returns_forward_paginated(
+    mocker: pytest_mock.MockerFixture,
+    test_user_id: str,
+) -> None:
+    """Completed sessions (no active stream) return forward_paginated=True."""
+    _make_paginated_messages(mocker)
+    mocker.patch(
+        "backend.api.features.chat.routes.stream_registry.get_active_session",
+        new_callable=AsyncMock,
+        return_value=(None, None),
+    )
+
+    response = client.get("/sessions/sess-1")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["forward_paginated"] is True
+    assert data["newest_sequence"] == 0
+
+
+def test_get_session_active_returns_backward_paginated(
+    mocker: pytest_mock.MockerFixture,
+    test_user_id: str,
+) -> None:
+    """Active sessions (with running stream) return forward_paginated=False."""
+    from backend.copilot.stream_registry import ActiveSession
+
+    _make_paginated_messages(mocker)
+    active = MagicMock(spec=ActiveSession)
+    active.turn_id = "turn-1"
+    mocker.patch(
+        "backend.api.features.chat.routes.stream_registry.get_active_session",
+        new_callable=AsyncMock,
+        return_value=(active, "msg-1"),
+    )
+
+    response = client.get("/sessions/sess-1")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["forward_paginated"] is False
+    assert data["active_stream"] is not None
+    assert data["active_stream"]["turn_id"] == "turn-1"
+
+
+def test_get_session_after_sequence_returns_forward_paginated(
+    mocker: pytest_mock.MockerFixture,
+    test_user_id: str,
+) -> None:
+    """after_sequence param returns forward_paginated=True; no stream check needed."""
+    _, mock_paginate = _make_paginated_messages(mocker)
+
+    response = client.get("/sessions/sess-1?after_sequence=10")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["forward_paginated"] is True
+    call_kwargs = mock_paginate.call_args
+    assert call_kwargs.kwargs.get("after_sequence") == 10
+    assert call_kwargs.kwargs.get("before_sequence") is None
+
+
+def test_get_session_both_cursors_returns_400(
+    test_user_id: str,
+) -> None:
+    """Sending both before_sequence and after_sequence returns 400."""
+    response = client.get("/sessions/sess-1?before_sequence=5&after_sequence=10")
+
+    assert response.status_code == 400
+
+
+def test_get_session_toctou_refetch_when_session_completes_mid_request(
+    mocker: pytest_mock.MockerFixture,
+    test_user_id: str,
+) -> None:
+    """Race condition: session was active at pre-check but completes before DB fetch.
+
+    The route should detect the race via a post-fetch re-check, then re-fetch
+    from seq 0 so the initial prompt is always visible.
+    """
+    from backend.copilot.stream_registry import ActiveSession
+
+    page, mock_paginate = _make_paginated_messages(mocker)
+    active = MagicMock(spec=ActiveSession)
+    active.turn_id = "turn-1"
+
+    # First call: session appears active.  Second call: session has completed.
+    mock_get_active = mocker.patch(
+        "backend.api.features.chat.routes.stream_registry.get_active_session",
+        new_callable=AsyncMock,
+        side_effect=[(active, "msg-1"), (None, None)],
+    )
+
+    response = client.get("/sessions/sess-1")
+
+    assert response.status_code == 200
+    data = response.json()
+    # Post-race: session is now completed → forward_paginated=True, no stream
+    assert data["forward_paginated"] is True
+    assert data["active_stream"] is None
+    # The DB was queried twice: once newest-first, once from_start=True
+    assert mock_paginate.call_count == 2
+    assert mock_get_active.call_count == 2
+    second_call = mock_paginate.call_args_list[1]
+    assert second_call.kwargs.get("from_start") is True

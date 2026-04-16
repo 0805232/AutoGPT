@@ -82,6 +82,15 @@
               "anyOf": [{ "type": "string" }, { "type": "null" }],
               "title": "Tracking Type"
             }
+          },
+          {
+            "name": "graph_exec_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "title": "Graph Exec Id"
+            }
           }
         ],
         "responses": {
@@ -207,6 +216,15 @@
               "anyOf": [{ "type": "string" }, { "type": "null" }],
               "title": "Tracking Type"
             }
+          },
+          {
+            "name": "graph_exec_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "title": "Graph Exec Id"
+            }
           }
         ],
         "responses": {
@@ -308,6 +326,15 @@
             "schema": {
               "anyOf": [{ "type": "string" }, { "type": "null" }],
               "title": "Tracking Type"
+            }
+          },
+          {
+            "name": "graph_exec_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "title": "Graph Exec Id"
             }
           }
         ],
@@ -1319,7 +1346,15 @@
                     {
                       "$ref": "#/components/schemas/MCPToolsDiscoveredResponse"
                     },
-                    { "$ref": "#/components/schemas/MCPToolOutputResponse" }
+                    { "$ref": "#/components/schemas/MCPToolOutputResponse" },
+                    { "$ref": "#/components/schemas/MemoryStoreResponse" },
+                    { "$ref": "#/components/schemas/MemorySearchResponse" },
+                    {
+                      "$ref": "#/components/schemas/MemoryForgetCandidatesResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MemoryForgetConfirmResponse"
+                    }
                   ],
                   "title": "Response Getv2[Dummy] Tool Response Type Export For Codegen"
                 }
@@ -1463,7 +1498,7 @@
       "get": {
         "tags": ["v2", "chat", "chat"],
         "summary": "Get Session",
-        "description": "Retrieve the details of a specific chat session.\n\nSupports cursor-based pagination via ``limit`` and ``before_sequence``.\nWhen no pagination params are provided, returns the most recent messages.\n\nArgs:\n    session_id: The unique identifier for the desired chat session.\n    user_id: The authenticated user's ID.\n    limit: Maximum number of messages to return (1-200, default 50).\n    before_sequence: Return messages with sequence < this value (cursor).\n\nReturns:\n    SessionDetailResponse: Details for the requested session, including\n        active_stream info and pagination metadata.",
+        "description": "Retrieve the details of a specific chat session.\n\nSupports cursor-based pagination via ``limit``, ``before_sequence``, and\n``after_sequence``. The two cursor parameters are mutually exclusive.\n\nOn the initial load (no cursor provided) of a completed session, messages\nare returned in forward order starting from sequence 0 so the user always\nsees their initial prompt.  Active sessions use the legacy newest-first\norder so streaming context is preserved.",
         "operationId": "getV2GetSession",
         "security": [{ "HTTPBearerJWT": [] }],
         "parameters": [
@@ -1481,9 +1516,11 @@
               "type": "integer",
               "maximum": 200,
               "minimum": 1,
+              "description": "Maximum number of messages to return.",
               "default": 50,
               "title": "Limit"
-            }
+            },
+            "description": "Maximum number of messages to return."
           },
           {
             "name": "before_sequence",
@@ -1494,8 +1531,24 @@
                 { "type": "integer", "minimum": 0 },
                 { "type": "null" }
               ],
+              "description": "Backward pagination cursor. Return messages with sequence number strictly less than this value. Used by active-session load-more. Mutually exclusive with after_sequence.",
               "title": "Before Sequence"
-            }
+            },
+            "description": "Backward pagination cursor. Return messages with sequence number strictly less than this value. Used by active-session load-more. Mutually exclusive with after_sequence."
+          },
+          {
+            "name": "after_sequence",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                { "type": "integer", "minimum": 0 },
+                { "type": "null" }
+              ],
+              "description": "Forward pagination cursor. Return messages with sequence number strictly greater than this value. Used by completed-session load-more. Mutually exclusive with before_sequence.",
+              "title": "After Sequence"
+            },
+            "description": "Forward pagination cursor. Return messages with sequence number strictly greater than this value. Used by completed-session load-more. Mutually exclusive with before_sequence."
           }
         ],
         "responses": {
@@ -1606,6 +1659,35 @@
       }
     },
     "/api/chat/sessions/{session_id}/stream": {
+      "delete": {
+        "tags": ["v2", "chat", "chat"],
+        "summary": "Disconnect Session Stream",
+        "description": "Disconnect all active SSE listeners for a session.\n\nCalled by the frontend when the user switches away from a chat so the\nbackend releases XREAD listeners immediately rather than waiting for\nthe 5-10 s timeout.",
+        "operationId": "deleteV2DisconnectSessionStream",
+        "security": [{ "HTTPBearerJWT": [] }],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Session Id" }
+          }
+        ],
+        "responses": {
+          "204": { "description": "Successful Response" },
+          "401": {
+            "$ref": "#/components/responses/HTTP401NotAuthenticatedError"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      },
       "get": {
         "tags": ["v2", "chat", "chat"],
         "summary": "Resume Session Stream",
@@ -6050,74 +6132,6 @@
         "security": [{ "HTTPBearerJWT": [] }]
       }
     },
-    "/api/platform-linking/chat/session": {
-      "post": {
-        "tags": ["platform-linking"],
-        "summary": "Create a CoPilot session for a platform user (bot-facing)",
-        "description": "Create a new CoPilot session owned by the resolved AutoGPT account.",
-        "operationId": "postPlatform-linkingCreate a copilot session for a platform user (bot-facing)",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/BotChatRequest" }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BotChatSessionResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "security": [{ "APIKeyHeader": [] }]
-      }
-    },
-    "/api/platform-linking/chat/stream": {
-      "post": {
-        "tags": ["platform-linking"],
-        "summary": "Stream a CoPilot response for a platform user (bot-facing)",
-        "description": "Send a message to CoPilot and stream the response as SSE.",
-        "operationId": "postPlatform-linkingStream a copilot response for a platform user (bot-facing)",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/BotChatRequest" }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": { "application/json": { "schema": {} } }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "security": [{ "APIKeyHeader": [] }]
-      }
-    },
     "/api/platform-linking/links": {
       "get": {
         "tags": ["platform-linking"],
@@ -6180,118 +6194,10 @@
         }
       }
     },
-    "/api/platform-linking/resolve": {
-      "post": {
-        "tags": ["platform-linking"],
-        "summary": "Check whether a platform server is linked",
-        "description": "Called by the bot for every message in a server/group channel.",
-        "operationId": "postPlatform-linkingCheck whether a platform server is linked",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/ResolveServerRequest" }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ResolveResponse" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "security": [{ "APIKeyHeader": [] }]
-      }
-    },
-    "/api/platform-linking/resolve-user": {
-      "post": {
-        "tags": ["platform-linking"],
-        "summary": "Check whether an individual's DMs are linked",
-        "description": "Called by the bot for every DM with an individual.",
-        "operationId": "postPlatform-linkingCheck whether an individual's dms are linked",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/ResolveUserRequest" }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ResolveResponse" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "security": [{ "APIKeyHeader": [] }]
-      }
-    },
-    "/api/platform-linking/tokens": {
-      "post": {
-        "tags": ["platform-linking"],
-        "summary": "Create a SERVER link token for an unlinked server",
-        "description": "Bot creates a token to claim a server. First user to confirm becomes owner.",
-        "operationId": "postPlatform-linkingCreate a server link token for an unlinked server",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateLinkTokenRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/LinkTokenResponse" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "security": [{ "APIKeyHeader": [] }]
-      }
-    },
     "/api/platform-linking/tokens/{token}/confirm": {
       "post": {
         "tags": ["platform-linking"],
         "summary": "Confirm a SERVER link token (user must be authenticated)",
-        "description": "Frontend calls this after the user logs in and clicks 'Connect'.",
         "operationId": "postPlatform-linkingConfirm a server link token (user must be authenticated)",
         "security": [{ "HTTPBearerJWT": [] }],
         "parameters": [
@@ -6333,9 +6239,9 @@
     "/api/platform-linking/tokens/{token}/info": {
       "get": {
         "tags": ["platform-linking"],
-        "summary": "Get display info for a link token (no auth required)",
-        "description": "Display info for the frontend link page — platform, link type, server\nname if applicable. No auth: token has 32 bytes of entropy, 30-min TTL.",
-        "operationId": "getPlatform-linkingGet display info for a link token (no auth required)",
+        "summary": "Get display info for a link token",
+        "operationId": "getPlatform-linkingGet display info for a link token",
+        "security": [{ "HTTPBearerJWT": [] }],
         "parameters": [
           {
             "name": "token",
@@ -6360,47 +6266,8 @@
               }
             }
           },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/platform-linking/tokens/{token}/status": {
-      "get": {
-        "tags": ["platform-linking"],
-        "summary": "Check if a link token has been consumed",
-        "description": "Bot polls to check if the user has completed linking.",
-        "operationId": "getPlatform-linkingCheck if a link token has been consumed",
-        "security": [{ "APIKeyHeader": [] }],
-        "parameters": [
-          {
-            "name": "token",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "maxLength": 64,
-              "pattern": "^[A-Za-z0-9_-]+$",
-              "title": "Token"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LinkTokenStatusResponse"
-                }
-              }
-            }
+          "401": {
+            "$ref": "#/components/responses/HTTP401NotAuthenticatedError"
           },
           "422": {
             "description": "Validation Error",
@@ -6477,48 +6344,10 @@
         }
       }
     },
-    "/api/platform-linking/user-tokens": {
-      "post": {
-        "tags": ["platform-linking"],
-        "summary": "Create a USER link token for an unlinked DM user",
-        "description": "Bot creates a token for an individual to link their DMs with the bot.",
-        "operationId": "postPlatform-linkingCreate a user link token for an unlinked dm user",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateUserLinkTokenRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/LinkTokenResponse" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "security": [{ "APIKeyHeader": [] }]
-      }
-    },
     "/api/platform-linking/user-tokens/{token}/confirm": {
       "post": {
         "tags": ["platform-linking"],
         "summary": "Confirm a USER link token (user must be authenticated)",
-        "description": "Frontend calls this after the user logs in and clicks 'Connect' on a DM link.",
         "operationId": "postPlatform-linkingConfirm a user link token (user must be authenticated)",
         "security": [{ "HTTPBearerJWT": [] }],
         "parameters": [
@@ -9494,51 +9323,6 @@
         "required": ["file"],
         "title": "Body_uploadWorkspaceFile"
       },
-      "BotChatRequest": {
-        "properties": {
-          "platform": { "$ref": "#/components/schemas/Platform" },
-          "platform_server_id": {
-            "anyOf": [
-              { "type": "string", "maxLength": 255 },
-              { "type": "null" }
-            ],
-            "title": "Platform Server Id",
-            "description": "Server/guild/group ID — null for DM context"
-          },
-          "platform_user_id": {
-            "type": "string",
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Platform User Id",
-            "description": "Platform user ID of the person who sent the message"
-          },
-          "message": {
-            "type": "string",
-            "maxLength": 32000,
-            "minLength": 1,
-            "title": "Message",
-            "description": "The user's message"
-          },
-          "session_id": {
-            "anyOf": [{ "type": "string" }, { "type": "null" }],
-            "title": "Session Id",
-            "description": "Existing CoPilot session ID. If omitted, a new session is created."
-          }
-        },
-        "type": "object",
-        "required": ["platform", "platform_user_id", "message"],
-        "title": "BotChatRequest",
-        "description": "Request from the bot to send a message on behalf of a platform user.\n\nExactly one of (platform_server_id) or () must resolve via context:\n  - SERVER context: both platform_server_id and platform_user_id set.\n    Billed to the server owner; per-user sessions.\n  - DM context: platform_server_id is null, platform_user_id set.\n    Billed to that user's own account."
-      },
-      "BotChatSessionResponse": {
-        "properties": {
-          "session_id": { "type": "string", "title": "Session Id" }
-        },
-        "type": "object",
-        "required": ["session_id"],
-        "title": "BotChatSessionResponse",
-        "description": "Returned when creating a new session via the bot proxy."
-      },
       "BulkMoveAgentsRequest": {
         "properties": {
           "agent_ids": {
@@ -9690,8 +9474,7 @@
           "platform_server_id",
           "server_name"
         ],
-        "title": "ConfirmLinkResponse",
-        "description": "Server-link confirmation result. link_type is always SERVER here."
+        "title": "ConfirmLinkResponse"
       },
       "ConfirmUserLinkResponse": {
         "properties": {
@@ -9705,8 +9488,7 @@
         },
         "type": "object",
         "required": ["success", "platform", "platform_user_id"],
-        "title": "ConfirmUserLinkResponse",
-        "description": "User-link (DM) confirmation result."
+        "title": "ConfirmUserLinkResponse"
       },
       "ContentType": {
         "type": "string",
@@ -9718,6 +9500,15 @@
           "LIBRARY_AGENT"
         ],
         "title": "ContentType"
+      },
+      "CostBucket": {
+        "properties": {
+          "bucket": { "type": "string", "title": "Bucket" },
+          "count": { "type": "integer", "title": "Count" }
+        },
+        "type": "object",
+        "required": ["bucket", "count"],
+        "title": "CostBucket"
       },
       "CostLogRow": {
         "properties": {
@@ -9848,56 +9639,6 @@
         "required": ["graph"],
         "title": "CreateGraph"
       },
-      "CreateLinkTokenRequest": {
-        "properties": {
-          "platform": {
-            "$ref": "#/components/schemas/Platform",
-            "description": "Platform name"
-          },
-          "platform_server_id": {
-            "type": "string",
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Platform Server Id",
-            "description": "Server/guild/group ID on the platform"
-          },
-          "platform_user_id": {
-            "type": "string",
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Platform User Id",
-            "description": "Platform user ID of the person claiming ownership"
-          },
-          "platform_username": {
-            "anyOf": [
-              { "type": "string", "maxLength": 255 },
-              { "type": "null" }
-            ],
-            "title": "Platform Username",
-            "description": "Display name of the person claiming ownership"
-          },
-          "server_name": {
-            "anyOf": [
-              { "type": "string", "maxLength": 255 },
-              { "type": "null" }
-            ],
-            "title": "Server Name",
-            "description": "Display name of the server/group"
-          },
-          "channel_id": {
-            "anyOf": [
-              { "type": "string", "maxLength": 255 },
-              { "type": "null" }
-            ],
-            "title": "Channel Id",
-            "description": "Channel ID so the bot can send a confirmation message"
-          }
-        },
-        "type": "object",
-        "required": ["platform", "platform_server_id", "platform_user_id"],
-        "title": "CreateLinkTokenRequest",
-        "description": "Request from the bot service to create a linking token for a server.\n\nCalled when no PlatformLink exists for the given server. The bot sends\nthe resulting link URL to the user who triggered the interaction — they\nbecome the server owner when they complete the link."
-      },
       "CreateSessionRequest": {
         "properties": {
           "dry_run": { "type": "boolean", "title": "Dry Run", "default": false }
@@ -9924,30 +9665,6 @@
         "required": ["id", "created_at", "user_id"],
         "title": "CreateSessionResponse",
         "description": "Response model containing information on a newly created chat session."
-      },
-      "CreateUserLinkTokenRequest": {
-        "properties": {
-          "platform": { "$ref": "#/components/schemas/Platform" },
-          "platform_user_id": {
-            "type": "string",
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Platform User Id",
-            "description": "Platform user ID of the person linking their DMs"
-          },
-          "platform_username": {
-            "anyOf": [
-              { "type": "string", "maxLength": 255 },
-              { "type": "null" }
-            ],
-            "title": "Platform Username",
-            "description": "Their display name (best-effort for audit)"
-          }
-        },
-        "type": "object",
-        "required": ["platform", "platform_user_id"],
-        "title": "CreateUserLinkTokenRequest",
-        "description": "Request from the bot service to create a DM (user-level) linking token."
       },
       "CreatorDetails": {
         "properties": {
@@ -11927,40 +11644,12 @@
         },
         "type": "object",
         "required": ["platform", "link_type"],
-        "title": "LinkTokenInfoResponse",
-        "description": "Non-sensitive display info for the frontend link page."
-      },
-      "LinkTokenResponse": {
-        "properties": {
-          "token": { "type": "string", "title": "Token" },
-          "expires_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Expires At"
-          },
-          "link_url": { "type": "string", "title": "Link Url" }
-        },
-        "type": "object",
-        "required": ["token", "expires_at", "link_url"],
-        "title": "LinkTokenResponse"
-      },
-      "LinkTokenStatusResponse": {
-        "properties": {
-          "status": {
-            "type": "string",
-            "enum": ["pending", "linked", "expired"],
-            "title": "Status"
-          }
-        },
-        "type": "object",
-        "required": ["status"],
-        "title": "LinkTokenStatusResponse"
+        "title": "LinkTokenInfoResponse"
       },
       "LinkType": {
         "type": "string",
         "enum": ["SERVER", "USER"],
-        "title": "LinkType",
-        "description": "Whether a token/link targets a server (group chat) or a user (DM)."
+        "title": "LinkType"
       },
       "ListFilesResponse": {
         "properties": {
@@ -12181,6 +11870,103 @@
         "required": ["name", "id", "slug"],
         "title": "MarketplaceListingCreator",
         "description": "Creator information for a marketplace listing."
+      },
+      "MemoryForgetCandidatesResponse": {
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/ResponseType",
+            "default": "memory_forget_candidates"
+          },
+          "message": { "type": "string", "title": "Message" },
+          "session_id": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Session Id"
+          },
+          "candidates": {
+            "items": {
+              "additionalProperties": { "type": "string" },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Candidates"
+          }
+        },
+        "type": "object",
+        "required": ["message"],
+        "title": "MemoryForgetCandidatesResponse",
+        "description": "Response with candidate memories to forget."
+      },
+      "MemoryForgetConfirmResponse": {
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/ResponseType",
+            "default": "memory_forget_confirm"
+          },
+          "message": { "type": "string", "title": "Message" },
+          "session_id": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Session Id"
+          },
+          "deleted_uuids": {
+            "items": { "type": "string" },
+            "type": "array",
+            "title": "Deleted Uuids"
+          },
+          "failed_uuids": {
+            "items": { "type": "string" },
+            "type": "array",
+            "title": "Failed Uuids"
+          }
+        },
+        "type": "object",
+        "required": ["message"],
+        "title": "MemoryForgetConfirmResponse",
+        "description": "Response after deleting specific memory edges."
+      },
+      "MemorySearchResponse": {
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/ResponseType",
+            "default": "memory_search"
+          },
+          "message": { "type": "string", "title": "Message" },
+          "session_id": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Session Id"
+          },
+          "facts": {
+            "items": { "type": "string" },
+            "type": "array",
+            "title": "Facts"
+          },
+          "recent_episodes": {
+            "items": { "type": "string" },
+            "type": "array",
+            "title": "Recent Episodes"
+          }
+        },
+        "type": "object",
+        "required": ["message"],
+        "title": "MemorySearchResponse",
+        "description": "Response when memories are searched."
+      },
+      "MemoryStoreResponse": {
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/ResponseType",
+            "default": "memory_store"
+          },
+          "message": { "type": "string", "title": "Message" },
+          "session_id": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Session Id"
+          },
+          "memory_name": { "type": "string", "title": "Memory Name" }
+        },
+        "type": "object",
+        "required": ["message", "memory_name"],
+        "title": "MemoryStoreResponse",
+        "description": "Response when a memory is stored."
       },
       "Message": {
         "properties": {
@@ -12846,20 +12632,6 @@
         "title": "PendingHumanReviewModel",
         "description": "Response model for pending human review data.\n\nRepresents a human review request that is awaiting user action.\nContains all necessary information for a user to review and approve\nor reject data from a Human-in-the-Loop block execution.\n\nAttributes:\n    id: Unique identifier for the review record\n    user_id: ID of the user who must perform the review\n    node_exec_id: ID of the node execution that created this review\n    node_id: ID of the node definition (for grouping reviews from same node)\n    graph_exec_id: ID of the graph execution containing the node\n    graph_id: ID of the graph template being executed\n    graph_version: Version number of the graph template\n    payload: The actual data payload awaiting review\n    instructions: Instructions or message for the reviewer\n    editable: Whether the reviewer can edit the data\n    status: Current review status (WAITING, APPROVED, or REJECTED)\n    review_message: Optional message from the reviewer\n    created_at: Timestamp when review was created\n    updated_at: Timestamp when review was last modified\n    reviewed_at: Timestamp when review was completed (if applicable)"
       },
-      "Platform": {
-        "type": "string",
-        "enum": [
-          "DISCORD",
-          "TELEGRAM",
-          "SLACK",
-          "TEAMS",
-          "WHATSAPP",
-          "GITHUB",
-          "LINEAR"
-        ],
-        "title": "Platform",
-        "description": "Supported platform types (mirrors Prisma PlatformType)."
-      },
       "PlatformCostDashboard": {
         "properties": {
           "by_provider": {
@@ -12877,7 +12649,58 @@
             "title": "Total Cost Microdollars"
           },
           "total_requests": { "type": "integer", "title": "Total Requests" },
-          "total_users": { "type": "integer", "title": "Total Users" }
+          "total_users": { "type": "integer", "title": "Total Users" },
+          "total_input_tokens": {
+            "type": "integer",
+            "title": "Total Input Tokens",
+            "default": 0
+          },
+          "total_output_tokens": {
+            "type": "integer",
+            "title": "Total Output Tokens",
+            "default": 0
+          },
+          "avg_input_tokens_per_request": {
+            "type": "number",
+            "title": "Avg Input Tokens Per Request",
+            "default": 0.0
+          },
+          "avg_output_tokens_per_request": {
+            "type": "number",
+            "title": "Avg Output Tokens Per Request",
+            "default": 0.0
+          },
+          "avg_cost_microdollars_per_request": {
+            "type": "number",
+            "title": "Avg Cost Microdollars Per Request",
+            "default": 0.0
+          },
+          "cost_p50_microdollars": {
+            "type": "number",
+            "title": "Cost P50 Microdollars",
+            "default": 0.0
+          },
+          "cost_p75_microdollars": {
+            "type": "number",
+            "title": "Cost P75 Microdollars",
+            "default": 0.0
+          },
+          "cost_p95_microdollars": {
+            "type": "number",
+            "title": "Cost P95 Microdollars",
+            "default": 0.0
+          },
+          "cost_p99_microdollars": {
+            "type": "number",
+            "title": "Cost P99 Microdollars",
+            "default": 0.0
+          },
+          "cost_buckets": {
+            "items": { "$ref": "#/components/schemas/CostBucket" },
+            "type": "array",
+            "title": "Cost Buckets",
+            "default": []
+          }
         },
         "type": "object",
         "required": [
@@ -13551,44 +13374,6 @@
         "required": ["credit_amount"],
         "title": "RequestTopUp"
       },
-      "ResolveResponse": {
-        "properties": { "linked": { "type": "boolean", "title": "Linked" } },
-        "type": "object",
-        "required": ["linked"],
-        "title": "ResolveResponse"
-      },
-      "ResolveServerRequest": {
-        "properties": {
-          "platform": { "$ref": "#/components/schemas/Platform" },
-          "platform_server_id": {
-            "type": "string",
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Platform Server Id",
-            "description": "Server/guild/group ID to look up"
-          }
-        },
-        "type": "object",
-        "required": ["platform", "platform_server_id"],
-        "title": "ResolveServerRequest",
-        "description": "Check whether a platform server is linked to an AutoGPT owner account."
-      },
-      "ResolveUserRequest": {
-        "properties": {
-          "platform": { "$ref": "#/components/schemas/Platform" },
-          "platform_user_id": {
-            "type": "string",
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Platform User Id",
-            "description": "Platform user ID to look up"
-          }
-        },
-        "type": "object",
-        "required": ["platform", "platform_user_id"],
-        "title": "ResolveUserRequest",
-        "description": "Check whether an individual platform user has linked their DMs."
-      },
       "ResponseType": {
         "type": "string",
         "enum": [
@@ -13637,7 +13422,9 @@
           "feature_request_search",
           "feature_request_created",
           "memory_store",
-          "memory_search"
+          "memory_search",
+          "memory_forget_candidates",
+          "memory_forget_confirm"
         ],
         "title": "ResponseType",
         "description": "Types of tool responses."
@@ -13881,6 +13668,15 @@
           "oldest_sequence": {
             "anyOf": [{ "type": "integer" }, { "type": "null" }],
             "title": "Oldest Sequence"
+          },
+          "newest_sequence": {
+            "anyOf": [{ "type": "integer" }, { "type": "null" }],
+            "title": "Newest Sequence"
+          },
+          "forward_paginated": {
+            "type": "boolean",
+            "title": "Forward Paginated",
+            "default": false
           },
           "total_prompt_tokens": {
             "type": "integer",
@@ -14703,6 +14499,14 @@
             ],
             "title": "Mode",
             "description": "Autopilot mode: 'fast' for baseline LLM, 'extended_thinking' for Claude Agent SDK. If None, uses the server default (extended_thinking)."
+          },
+          "model": {
+            "anyOf": [
+              { "type": "string", "enum": ["standard", "advanced"] },
+              { "type": "null" }
+            ],
+            "title": "Model",
+            "description": "Model tier: 'standard' for the default model, 'advanced' for the highest-capability model. If None, the server applies per-user LD targeting then falls back to config."
           }
         },
         "type": "object",
@@ -14723,16 +14527,29 @@
       },
       "SubscriptionStatusResponse": {
         "properties": {
-          "tier": { "type": "string", "title": "Tier" },
+          "tier": {
+            "type": "string",
+            "enum": ["FREE", "PRO", "BUSINESS", "ENTERPRISE"],
+            "title": "Tier"
+          },
           "monthly_cost": { "type": "integer", "title": "Monthly Cost" },
           "tier_costs": {
             "additionalProperties": { "type": "integer" },
             "type": "object",
             "title": "Tier Costs"
+          },
+          "proration_credit_cents": {
+            "type": "integer",
+            "title": "Proration Credit Cents"
           }
         },
         "type": "object",
-        "required": ["tier", "monthly_cost", "tier_costs"],
+        "required": [
+          "tier",
+          "monthly_cost",
+          "tier_costs",
+          "proration_credit_cents"
+        ],
         "title": "SubscriptionStatusResponse"
       },
       "SubscriptionTier": {
@@ -16407,7 +16224,22 @@
             "type": "integer",
             "title": "Total Output Tokens"
           },
-          "request_count": { "type": "integer", "title": "Request Count" }
+          "total_cache_read_tokens": {
+            "type": "integer",
+            "title": "Total Cache Read Tokens",
+            "default": 0
+          },
+          "total_cache_creation_tokens": {
+            "type": "integer",
+            "title": "Total Cache Creation Tokens",
+            "default": 0
+          },
+          "request_count": { "type": "integer", "title": "Request Count" },
+          "cost_bearing_request_count": {
+            "type": "integer",
+            "title": "Cost Bearing Request Count",
+            "default": 0
+          }
         },
         "type": "object",
         "required": [
@@ -16875,11 +16707,6 @@
         "type": "apiKey",
         "in": "header",
         "name": "X-Postmark-Webhook-Token"
-      },
-      "APIKeyHeader": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "X-Bot-API-Key"
       },
       "HTTPBearer": { "type": "http", "scheme": "bearer" },
       "HTTPBearerJWT": {

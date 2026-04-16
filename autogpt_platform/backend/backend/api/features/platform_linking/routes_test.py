@@ -1,348 +1,262 @@
-"""Tests for platform bot linking API routes."""
+"""Route tests: domain exceptions → HTTPException status codes."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
 
-from backend.api.features.platform_linking.auth import check_bot_api_key
-from backend.api.features.platform_linking.models import (
-    BotChatRequest,
-    ConfirmLinkResponse,
-    CreateLinkTokenRequest,
-    DeleteLinkResponse,
-    LinkTokenStatusResponse,
-    Platform,
-    ResolveResponse,
-    ResolveServerRequest,
+from backend.util.exceptions import (
+    LinkAlreadyExistsError,
+    LinkFlowMismatchError,
+    LinkTokenExpiredError,
+    NotAuthorizedError,
+    NotFoundError,
 )
 
 
-class TestPlatformEnum:
-    def test_all_platforms_exist(self):
-        assert Platform.DISCORD.value == "DISCORD"
-        assert Platform.TELEGRAM.value == "TELEGRAM"
-        assert Platform.SLACK.value == "SLACK"
-        assert Platform.TEAMS.value == "TEAMS"
-        assert Platform.WHATSAPP.value == "WHATSAPP"
-        assert Platform.GITHUB.value == "GITHUB"
-        assert Platform.LINEAR.value == "LINEAR"
-
-
-class TestBotApiKeyAuth:
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": ""}, clear=False)
-    @patch("backend.api.features.platform_linking.auth.Settings")
-    def test_no_key_configured_allows_when_auth_disabled(self, mock_settings_cls):
-        from backend.api.features.platform_linking.auth import _auth_enabled
-
-        _auth_enabled.cache_clear()
-        mock_settings_cls.return_value.config.enable_auth = False
-        check_bot_api_key(None)
-
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": ""}, clear=False)
-    @patch("backend.api.features.platform_linking.auth.Settings")
-    def test_no_key_configured_rejects_when_auth_enabled(self, mock_settings_cls):
-        from backend.api.features.platform_linking.auth import _auth_enabled
-
-        _auth_enabled.cache_clear()
-        mock_settings_cls.return_value.config.enable_auth = True
-        with pytest.raises(HTTPException) as exc_info:
-            check_bot_api_key(None)
-        assert exc_info.value.status_code == 503
-
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": "secret123"}, clear=False)
-    def test_valid_key(self):
-        check_bot_api_key("secret123")
-
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": "secret123"}, clear=False)
-    def test_invalid_key_rejected(self):
-        with pytest.raises(HTTPException) as exc_info:
-            check_bot_api_key("wrong")
-        assert exc_info.value.status_code == 401
-
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": "secret123"}, clear=False)
-    def test_missing_key_rejected(self):
-        with pytest.raises(HTTPException) as exc_info:
-            check_bot_api_key(None)
-        assert exc_info.value.status_code == 401
-
-
-class TestCreateLinkTokenRequest:
-    def test_valid_request(self):
-        req = CreateLinkTokenRequest(
-            platform=Platform.DISCORD,
-            platform_server_id="1126875755960336515",
-            platform_user_id="353922987235213313",
-            platform_username="Bently",
-            server_name="My Discord Server",
-        )
-        assert req.platform == Platform.DISCORD
-        assert req.platform_server_id == "1126875755960336515"
-        assert req.platform_user_id == "353922987235213313"
-        assert req.server_name == "My Discord Server"
-
-    def test_minimal_request(self):
-        req = CreateLinkTokenRequest(
-            platform=Platform.TELEGRAM,
-            platform_server_id="-100123456789",
-            platform_user_id="987654321",
-        )
-        assert req.server_name is None
-        assert req.platform_username is None
-
-    def test_empty_server_id_rejected(self):
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
-            CreateLinkTokenRequest(
-                platform=Platform.DISCORD,
-                platform_server_id="",
-                platform_user_id="123",
-            )
-
-    def test_too_long_server_id_rejected(self):
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
-            CreateLinkTokenRequest(
-                platform=Platform.DISCORD,
-                platform_server_id="x" * 256,
-                platform_user_id="123",
-            )
-
-    def test_invalid_platform_rejected(self):
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
-            CreateLinkTokenRequest.model_validate(
-                {
-                    "platform": "INVALID",
-                    "platform_server_id": "123",
-                    "platform_user_id": "456",
-                }
-            )
-
-
-class TestResolveServerRequest:
-    def test_valid_request(self):
-        req = ResolveServerRequest(
-            platform=Platform.DISCORD,
-            platform_server_id="1126875755960336515",
-        )
-        assert req.platform == Platform.DISCORD
-        assert req.platform_server_id == "1126875755960336515"
-
-    def test_empty_server_id_rejected(self):
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
-            ResolveServerRequest(
-                platform=Platform.SLACK,
-                platform_server_id="",
-            )
-
-
-class TestBotChatRequest:
-    def test_server_context(self):
-        req = BotChatRequest(
-            platform=Platform.DISCORD,
-            platform_server_id="1126875755960336515",
-            platform_user_id="353922987235213313",
-            message="Hello CoPilot!",
-        )
-        assert req.platform == Platform.DISCORD
-        assert req.platform_server_id == "1126875755960336515"
-        assert req.session_id is None
-
-    def test_dm_context_omits_server_id(self):
-        req = BotChatRequest(
-            platform=Platform.DISCORD,
-            platform_user_id="353922987235213313",
-            message="Hello in DMs!",
-        )
-        assert req.platform_server_id is None
-
-    def test_with_session_id(self):
-        req = BotChatRequest(
-            platform=Platform.DISCORD,
-            platform_server_id="guild_123",
-            platform_user_id="user_456",
-            message="follow up",
-            session_id="session-uuid-here",
-        )
-        assert req.session_id == "session-uuid-here"
-
-    def test_empty_message_rejected(self):
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
-            BotChatRequest(
-                platform=Platform.DISCORD,
-                platform_server_id="guild_123",
-                platform_user_id="user_456",
-                message="",
-            )
-
-    def test_empty_string_server_id_rejected(self):
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
-            BotChatRequest(
-                platform=Platform.DISCORD,
-                platform_server_id="",
-                platform_user_id="user_456",
-                message="hi",
-            )
-
-
-class TestResponseModels:
-    def test_link_token_status_pending(self):
-        resp = LinkTokenStatusResponse(status="pending")
-        assert resp.status == "pending"
-
-    def test_link_token_status_linked(self):
-        resp = LinkTokenStatusResponse(status="linked")
-        assert resp.status == "linked"
-
-    def test_link_token_status_expired(self):
-        resp = LinkTokenStatusResponse(status="expired")
-        assert resp.status == "expired"
-
-    def test_resolve_linked(self):
-        resp = ResolveResponse(linked=True)
-        assert resp.linked is True
-
-    def test_resolve_not_linked(self):
-        resp = ResolveResponse(linked=False)
-        assert resp.linked is False
-
-    def test_confirm_link_response(self):
-        resp = ConfirmLinkResponse(
-            success=True,
-            platform="DISCORD",
-            platform_server_id="1126875755960336515",
-            server_name="My Server",
-        )
-        assert resp.success is True
-        assert resp.server_name == "My Server"
-
-    def test_delete_link_response(self):
-        resp = DeleteLinkResponse(success=True)
-        assert resp.success is True
-
-
-class TestResolveEndpoint:
-    """Endpoint-level tests using mocked Prisma."""
-
+class TestTokenInfoRouteTranslation:
     @pytest.mark.asyncio
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": "testkey"}, clear=False)
-    async def test_resolve_linked_server(self):
-        from backend.api.features.platform_linking.routes import resolve_platform_server
-
-        mock_link = MagicMock()
-        mock_link.userId = "autogpt-user-123"
+    async def test_not_found_maps_to_404(self):
+        from backend.api.features.platform_linking.routes import (
+            get_link_token_info_route,
+        )
 
         with patch(
-            "backend.api.features.platform_linking.routes.find_server_link",
-            new=AsyncMock(return_value=mock_link),
+            "backend.api.features.platform_linking.routes.get_link_token_info",
+            new=AsyncMock(side_effect=NotFoundError("Token not found.")),
         ):
-            result = await resolve_platform_server(
-                ResolveServerRequest(
-                    platform=Platform.DISCORD,
-                    platform_server_id="guild_123",
-                ),
-                x_bot_api_key="testkey",
-            )
-
-        assert result.linked is True
+            with pytest.raises(HTTPException) as exc:
+                await get_link_token_info_route(token="abc")
+        assert exc.value.status_code == 404
 
     @pytest.mark.asyncio
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": "testkey"}, clear=False)
-    async def test_resolve_unlinked_server(self):
-        from backend.api.features.platform_linking.routes import resolve_platform_server
+    async def test_expired_maps_to_410(self):
+        from backend.api.features.platform_linking.routes import (
+            get_link_token_info_route,
+        )
 
         with patch(
-            "backend.api.features.platform_linking.routes.find_server_link",
-            new=AsyncMock(return_value=None),
+            "backend.api.features.platform_linking.routes.get_link_token_info",
+            new=AsyncMock(side_effect=LinkTokenExpiredError("Token expired.")),
         ):
-            result = await resolve_platform_server(
-                ResolveServerRequest(
-                    platform=Platform.DISCORD,
-                    platform_server_id="guild_unknown",
-                ),
-                x_bot_api_key="testkey",
-            )
+            with pytest.raises(HTTPException) as exc:
+                await get_link_token_info_route(token="abc")
+        assert exc.value.status_code == 410
 
-        assert result.linked is False
 
+class TestConfirmLinkRouteTranslation:
     @pytest.mark.asyncio
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": "testkey"}, clear=False)
-    async def test_resolve_rejects_wrong_api_key(self):
-        from backend.api.features.platform_linking.routes import resolve_platform_server
-
-        with pytest.raises(HTTPException) as exc_info:
-            await resolve_platform_server(
-                ResolveServerRequest(
-                    platform=Platform.DISCORD,
-                    platform_server_id="guild_123",
-                ),
-                x_bot_api_key="wrong_key",
-            )
-        assert exc_info.value.status_code == 401
-
-
-class TestCreateLinkTokenEndpoint:
-    @pytest.mark.asyncio
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": "testkey"}, clear=False)
-    async def test_create_token_for_unlinked_server(self):
-        from backend.api.features.platform_linking.routes import create_link_token
-
-        with (
-            patch(
-                "backend.api.features.platform_linking.routes.find_server_link",
-                new=AsyncMock(return_value=None),
-            ),
-            patch(
-                "backend.api.features.platform_linking.routes.PlatformLinkToken"
-            ) as mock_token_model,
-        ):
-            mock_token_model.prisma.return_value.update_many = AsyncMock(return_value=0)
-            mock_token_model.prisma.return_value.create = AsyncMock(
-                return_value=MagicMock()
-            )
-
-            result = await create_link_token(
-                CreateLinkTokenRequest(
-                    platform=Platform.DISCORD,
-                    platform_server_id="guild_123",
-                    platform_user_id="user_456",
-                    server_name="Test Server",
-                ),
-                x_bot_api_key="testkey",
-            )
-
-        assert result.token
-        assert "guild_123" not in result.token  # token is random
-        assert result.token in result.link_url
-        assert "?platform=DISCORD" in result.link_url
-
-    @pytest.mark.asyncio
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": "testkey"}, clear=False)
-    async def test_create_token_409_if_already_linked(self):
-        from backend.api.features.platform_linking.routes import create_link_token
+    async def test_not_found_maps_to_404(self):
+        from backend.api.features.platform_linking.routes import confirm_link_token
 
         with patch(
-            "backend.api.features.platform_linking.routes.find_server_link",
-            new=AsyncMock(return_value=MagicMock()),  # server is already linked
+            "backend.api.features.platform_linking.routes.confirm_server_link",
+            new=AsyncMock(side_effect=NotFoundError("Token not found.")),
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await create_link_token(
-                    CreateLinkTokenRequest(
-                        platform=Platform.DISCORD,
-                        platform_server_id="guild_already_linked",
-                        platform_user_id="user_456",
-                    ),
-                    x_bot_api_key="testkey",
-                )
+            with pytest.raises(HTTPException) as exc:
+                await confirm_link_token(token="abc", user_id="u1")
+        assert exc.value.status_code == 404
 
-        assert exc_info.value.status_code == 409
+    @pytest.mark.asyncio
+    async def test_wrong_flow_maps_to_400(self):
+        from backend.api.features.platform_linking.routes import confirm_link_token
+
+        with patch(
+            "backend.api.features.platform_linking.routes.confirm_server_link",
+            new=AsyncMock(side_effect=LinkFlowMismatchError("wrong flow")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await confirm_link_token(token="abc", user_id="u1")
+        assert exc.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_expired_maps_to_410(self):
+        from backend.api.features.platform_linking.routes import confirm_link_token
+
+        with patch(
+            "backend.api.features.platform_linking.routes.confirm_server_link",
+            new=AsyncMock(side_effect=LinkTokenExpiredError("expired")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await confirm_link_token(token="abc", user_id="u1")
+        assert exc.value.status_code == 410
+
+    @pytest.mark.asyncio
+    async def test_already_linked_maps_to_409(self):
+        from backend.api.features.platform_linking.routes import confirm_link_token
+
+        with patch(
+            "backend.api.features.platform_linking.routes.confirm_server_link",
+            new=AsyncMock(side_effect=LinkAlreadyExistsError("already linked")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await confirm_link_token(token="abc", user_id="u1")
+        assert exc.value.status_code == 409
+
+
+class TestConfirmUserLinkRouteTranslation:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "exc,expected_status",
+        [
+            (NotFoundError("missing"), 404),
+            (LinkFlowMismatchError("wrong flow"), 400),
+            (LinkTokenExpiredError("expired"), 410),
+            (LinkAlreadyExistsError("already"), 409),
+        ],
+    )
+    async def test_translation(self, exc: Exception, expected_status: int):
+        from backend.api.features.platform_linking.routes import confirm_user_link_token
+
+        with patch(
+            "backend.api.features.platform_linking.routes.confirm_user_link",
+            new=AsyncMock(side_effect=exc),
+        ):
+            with pytest.raises(HTTPException) as ctx:
+                await confirm_user_link_token(token="abc", user_id="u1")
+        assert ctx.value.status_code == expected_status
+
+
+class TestDeleteLinkRouteTranslation:
+    @pytest.mark.asyncio
+    async def test_not_found_maps_to_404(self):
+        from backend.api.features.platform_linking.routes import delete_link
+
+        with patch(
+            "backend.api.features.platform_linking.routes.delete_server_link",
+            new=AsyncMock(side_effect=NotFoundError("missing")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await delete_link(link_id="x", user_id="u1")
+        assert exc.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_not_owned_maps_to_403(self):
+        from backend.api.features.platform_linking.routes import delete_link
+
+        with patch(
+            "backend.api.features.platform_linking.routes.delete_server_link",
+            new=AsyncMock(side_effect=NotAuthorizedError("nope")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await delete_link(link_id="x", user_id="u1")
+        assert exc.value.status_code == 403
+
+
+class TestDeleteUserLinkRouteTranslation:
+    @pytest.mark.asyncio
+    async def test_not_found_maps_to_404(self):
+        from backend.api.features.platform_linking.routes import delete_user_link_route
+
+        with patch(
+            "backend.api.features.platform_linking.routes.delete_user_link",
+            new=AsyncMock(side_effect=NotFoundError("missing")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await delete_user_link_route(link_id="x", user_id="u1")
+        assert exc.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_not_owned_maps_to_403(self):
+        from backend.api.features.platform_linking.routes import delete_user_link_route
+
+        with patch(
+            "backend.api.features.platform_linking.routes.delete_user_link",
+            new=AsyncMock(side_effect=NotAuthorizedError("nope")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await delete_user_link_route(link_id="x", user_id="u1")
+        assert exc.value.status_code == 403
+
+
+# ── Adversarial: malformed token path params ──────────────────────────
+
+
+class TestAdversarialTokenPath:
+    # TokenPath enforces `^[A-Za-z0-9_-]+$` + max_length=64. Validation
+    # happens before the handler, so route through a TestClient.
+
+    @pytest.fixture
+    def client(self):
+        import fastapi
+        from autogpt_libs.auth import get_user_id, requires_user
+        from fastapi.testclient import TestClient
+
+        import backend.api.features.platform_linking.routes as routes_mod
+
+        app = fastapi.FastAPI()
+        app.dependency_overrides[requires_user] = lambda: None
+        app.dependency_overrides[get_user_id] = lambda: "caller-user"
+        app.include_router(routes_mod.router, prefix="/api/platform-linking")
+        return TestClient(app)
+
+    def test_rejects_token_with_special_chars(self, client):
+        response = client.get("/api/platform-linking/tokens/bad%24token/info")
+        assert response.status_code == 422
+
+    def test_rejects_token_with_path_traversal(self, client):
+        # Slashes, dots, URL-encoded traversal all rejected by the regex.
+        for probe in ("..%2F..", "foo..bar", "foo%2Fbar"):
+            response = client.get(f"/api/platform-linking/tokens/{probe}/info")
+            assert response.status_code in (
+                404,
+                422,
+            ), f"path-traversal probe {probe!r} returned {response.status_code}"
+
+    def test_rejects_token_too_long(self, client):
+        long_token = "a" * 65
+        response = client.get(f"/api/platform-linking/tokens/{long_token}/info")
+        assert response.status_code == 422
+
+    def test_accepts_token_at_max_length(self, client):
+        token = "a" * 64
+        with patch(
+            "backend.api.features.platform_linking.routes.get_link_token_info",
+            new=AsyncMock(side_effect=NotFoundError("missing")),
+        ):
+            response = client.get(f"/api/platform-linking/tokens/{token}/info")
+        # Passes path validation; NotFoundError → 404.
+        assert response.status_code == 404
+
+    def test_accepts_urlsafe_b64_token_shape(self, client):
+        # secrets.token_urlsafe produces [A-Za-z0-9_-]+ — accepted.
+        with patch(
+            "backend.api.features.platform_linking.routes.get_link_token_info",
+            new=AsyncMock(side_effect=NotFoundError("missing")),
+        ):
+            response = client.get("/api/platform-linking/tokens/abc-_XYZ123-_abc/info")
+        assert response.status_code == 404
+
+    def test_confirm_rejects_malformed_token(self, client):
+        # Same regex guard applies to the POST confirm path.
+        response = client.post("/api/platform-linking/tokens/bad%24token/confirm")
+        assert response.status_code == 422
+
+
+class TestAdversarialDeleteLinkId:
+    """DELETE link_id has no regex — ensure weird values are handled via
+    NotFoundError (no crash, no cross-user leak)."""
+
+    @pytest.fixture
+    def client(self):
+        import fastapi
+        from autogpt_libs.auth import get_user_id, requires_user
+        from fastapi.testclient import TestClient
+
+        import backend.api.features.platform_linking.routes as routes_mod
+
+        app = fastapi.FastAPI()
+        app.dependency_overrides[requires_user] = lambda: None
+        app.dependency_overrides[get_user_id] = lambda: "caller-user"
+        app.include_router(routes_mod.router, prefix="/api/platform-linking")
+        return TestClient(app)
+
+    def test_weird_link_id_returns_404(self, client):
+        with patch(
+            "backend.api.features.platform_linking.routes.delete_server_link",
+            new=AsyncMock(side_effect=NotFoundError("missing")),
+        ):
+            for link_id in ("'; DROP TABLE links;--", "../../etc/passwd", ""):
+                response = client.delete(f"/api/platform-linking/links/{link_id}")
+                # Empty string path → 405 (no match); weird strings → 404.
+                assert response.status_code in (404, 405)

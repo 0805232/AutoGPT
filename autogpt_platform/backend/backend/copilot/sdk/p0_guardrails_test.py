@@ -86,15 +86,14 @@ class TestResolveFallbackModel:
         assert result == "claude-sonnet-4.5-20250514"
 
     def test_default_value(self):
-        """Default fallback model resolves to a valid string."""
+        """Default fallback model resolves to None (disabled by default)."""
         cfg = _make_config()
         with patch(f"{_SVC}.config", cfg):
             from backend.copilot.sdk.service import _resolve_fallback_model
 
             result = _resolve_fallback_model()
 
-        assert result is not None
-        assert "sonnet" in result.lower() or "claude" in result.lower()
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -198,16 +197,19 @@ class TestConfigDefaults:
 
     def test_fallback_model_default(self):
         cfg = _make_config()
-        assert cfg.claude_agent_fallback_model
-        assert "sonnet" in cfg.claude_agent_fallback_model.lower()
+        assert cfg.claude_agent_fallback_model == ""
 
     def test_max_turns_default(self):
         cfg = _make_config()
-        assert cfg.claude_agent_max_turns == 1000
+        assert cfg.claude_agent_max_turns == 50
 
     def test_max_budget_usd_default(self):
         cfg = _make_config()
-        assert cfg.claude_agent_max_budget_usd == 100.0
+        assert cfg.claude_agent_max_budget_usd == 10.0
+
+    def test_max_thinking_tokens_default(self):
+        cfg = _make_config()
+        assert cfg.claude_agent_max_thinking_tokens == 8192
 
     def test_max_transient_retries_default(self):
         cfg = _make_config()
@@ -272,7 +274,7 @@ class TestBuildSdkEnv:
         assert "x-user-id: user-1" in env["ANTHROPIC_CUSTOM_HEADERS"]
 
     def test_openrouter_no_headers_when_ids_empty(self):
-        """Mode 3: No custom headers when session_id/user_id are not given."""
+        """Mode 3: Only Accept-Encoding header present when session_id/user_id not given."""
         cfg = _make_config(
             use_claude_code_subscription=False,
             use_openrouter=True,
@@ -284,7 +286,8 @@ class TestBuildSdkEnv:
 
             env = build_sdk_env()
 
-        assert "ANTHROPIC_CUSTOM_HEADERS" not in env
+        # SDK 0.1.58: Accept-Encoding: identity is always injected even without trace headers
+        assert env.get("ANTHROPIC_CUSTOM_HEADERS") == "Accept-Encoding: identity"
 
     def test_openrouter_clears_oauth_tokens(self):
         """Mode 3: OAuth tokens are explicitly cleared to prevent CLI preferring subscription auth."""

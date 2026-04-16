@@ -30,6 +30,7 @@ export interface ChatContainerProps {
   hasMoreMessages?: boolean;
   isLoadingMore?: boolean;
   onLoadMore?: () => void;
+  forwardPaginated?: boolean;
   /** Files dropped onto the chat window. */
   droppedFiles?: File[];
   /** Called after droppedFiles have been consumed by ChatInput. */
@@ -54,6 +55,7 @@ export const ChatContainer = ({
   hasMoreMessages,
   isLoadingMore,
   onLoadMore,
+  forwardPaginated,
   droppedFiles,
   onDroppedFilesConsumed,
   historicalDurations,
@@ -64,10 +66,7 @@ export const ChatContainer = ({
   // open state drive layout width; an artifact generated in a stale session
   // state would otherwise shrink the chat column with no panel rendered.
   const isArtifactOpen = isArtifactsEnabled && isArtifactPanelOpen;
-  useAutoOpenArtifacts({
-    messages: isArtifactsEnabled ? messages : [],
-    sessionId,
-  });
+  useAutoOpenArtifacts({ sessionId });
   const isBusy =
     status === "streaming" ||
     status === "submitted" ||
@@ -111,6 +110,7 @@ export const ChatContainer = ({
                 hasMoreMessages={hasMoreMessages}
                 isLoadingMore={isLoadingMore}
                 onLoadMore={onLoadMore}
+                forwardPaginated={forwardPaginated}
                 onRetry={handleRetry}
                 historicalDurations={historicalDurations}
               />

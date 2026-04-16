@@ -42,7 +42,8 @@ export function useCopilotPage() {
     setSessionToDelete,
     isDrawerOpen,
     setDrawerOpen,
-    copilotMode,
+    copilotChatMode,
+    copilotLlmModel,
     isDryRun,
   } = useCopilotUIStore();
 
@@ -55,11 +56,14 @@ export function useCopilotPage() {
     hasActiveStream,
     hasMoreMessages,
     oldestSequence,
+    newestSequence,
+    forwardPaginated,
     isLoadingSession,
     isSessionError,
     createSession,
     isCreatingSession,
     refetchSession,
+    sessionDryRun,
   } = useChatSession({ dryRun: isDryRun });
 
   const {
@@ -78,21 +82,30 @@ export function useCopilotPage() {
     hydratedMessages,
     hasActiveStream,
     refetchSession,
-    copilotMode: isModeToggleEnabled ? copilotMode : undefined,
+    copilotMode: isModeToggleEnabled ? copilotChatMode : undefined,
+    copilotModel: isModeToggleEnabled ? copilotLlmModel : undefined,
   });
 
-  const { olderMessages, hasMore, isLoadingMore, loadMore } =
+  const { pagedMessages, hasMore, isLoadingMore, loadMore, resetPaged } =
     useLoadMoreMessages({
       sessionId,
       initialOldestSequence: oldestSequence,
+      initialNewestSequence: newestSequence,
       initialHasMore: hasMoreMessages,
+      forwardPaginated,
       initialPageRawMessages: rawSessionMessages,
     });
 
-  // Combine older (paginated) messages with current page messages,
-  // merging consecutive assistant UIMessages at the page boundary so
-  // reasoning + response parts stay in a single bubble.
-  const messages = concatWithAssistantMerge(olderMessages, currentMessages);
+  // Combine paginated messages with current page messages, merging consecutive
+  // assistant UIMessages at the page boundary so reasoning + response parts
+  // stay in a single bubble.
+  // Forward pagination (completed sessions): current page is the beginning,
+  // paged messages are newer pages appended after.
+  // Backward pagination (active sessions): paged messages are older history
+  // prepended before the current page.
+  const messages = forwardPaginated
+    ? concatWithAssistantMerge(currentMessages, pagedMessages)
+    : concatWithAssistantMerge(pagedMessages, currentMessages);
 
   useCopilotNotifications(sessionId);
 
@@ -166,6 +179,23 @@ export function useCopilotPage() {
       sendMessage({ text: msg });
     }
   }, [sessionId, pendingMessage, sendMessage]);
+
+  // --- Clear backward-paginated messages when session completes ---
+  // When a session transitions from active (forwardPaginated=false) to complete
+  // (forwardPaginated=true), any backward-paginated older messages would be
+  // appended after currentMessages instead of before, causing chronological
+  // disorder. Reset paged state so the completed session renders cleanly.
+  const prevForwardPaginatedRef = useRef(forwardPaginated);
+  useEffect(() => {
+    if (
+      !prevForwardPaginatedRef.current &&
+      forwardPaginated &&
+      pagedMessages.length > 0
+    ) {
+      resetPaged();
+    }
+    prevForwardPaginatedRef.current = forwardPaginated;
+  }, [forwardPaginated, pagedMessages.length, resetPaged]);
 
   // --- Extract prompt from URL hash on mount (e.g. /copilot#prompt=Hello) ---
   useWorkflowImportAutoSubmit({
@@ -248,6 +278,15 @@ export function useCopilotPage() {
     isUserStoppingRef.current = false;
 
     if (sessionId) {
+      // When continuing a completed session that had forward-paginated history
+      // loaded, the paged messages would appear in wrong position relative to
+      // the new streaming turn (pagedMessages are newer pages, so they'd end
+      // up after the streaming turn). Reset paged state so ordering is correct
+      // during streaming; the user can reload history afterward if needed.
+      if (forwardPaginated && pagedMessages.length > 0) {
+        resetPaged();
+      }
+
       if (files && files.length > 0) {
         setIsUploadingFiles(true);
         try {
@@ -394,6 +433,7 @@ export function useCopilotPage() {
     hasMoreMessages: hasMore,
     isLoadingMore,
     loadMore,
+    forwardPaginated,
     // Mobile drawer
     isMobile,
     isDrawerOpen,
@@ -416,6 +456,11 @@ export function useCopilotPage() {
     rateLimitMessage,
     dismissRateLimit,
     // Dry run dev toggle
+    // isDryRun = global preference for NEW sessions (from localStorage).
+    // sessionDryRun = actual dry_run value of the CURRENT session (from API).
+    // Use isDryRun to configure future sessions; use sessionDryRun to display
+    // the current session's simulation state (banner, indicators).
     isDryRun,
+    sessionDryRun,
   };
 }

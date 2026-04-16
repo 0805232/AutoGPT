@@ -10,6 +10,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { parseAsString, useQueryState } from "nuqs";
 import { useEffect, useMemo, useRef } from "react";
 import { convertChatSessionMessagesToUiMessages } from "./helpers/convertChatSessionToUiMessages";
+import { resolveSessionDryRun } from "./helpers";
 
 interface UseChatSessionOptions {
   dryRun?: boolean;
@@ -83,6 +84,16 @@ export function useChatSession({ dryRun = false }: UseChatSessionOptions = {}) {
   const oldestSequence = useMemo(() => {
     if (sessionQuery.data?.status !== 200) return null;
     return sessionQuery.data.data.oldest_sequence ?? null;
+  }, [sessionQuery.data]);
+
+  const newestSequence = useMemo(() => {
+    if (sessionQuery.data?.status !== 200) return null;
+    return sessionQuery.data.data.newest_sequence ?? null;
+  }, [sessionQuery.data]);
+
+  const forwardPaginated = useMemo(() => {
+    if (sessionQuery.data?.status !== 200) return false;
+    return !!sessionQuery.data.data.forward_paginated;
   }, [sessionQuery.data]);
 
   // Memoize so the effect in useCopilotPage doesn't infinite-loop on a new
@@ -163,6 +174,18 @@ export function useChatSession({ dryRun = false }: UseChatSessionOptions = {}) {
       ? ((sessionQuery.data.data.messages ?? []) as unknown[])
       : [];
 
+  // The actual dry_run value stored in the session's metadata, read directly
+  // from the API response. This reflects what the session was ACTUALLY created
+  // with — not the user's current UI preference (isDryRun store).
+  //
+  // Design intent: the global isDryRun store is only used when creating NEW
+  // sessions. Once a session exists, its dry_run flag is immutable and should
+  // be read from here rather than from the store, which may have changed.
+  const sessionDryRun = useMemo(
+    () => resolveSessionDryRun(sessionQuery.data),
+    [sessionQuery.data],
+  );
+
   return {
     sessionId,
     setSessionId,
@@ -172,10 +195,13 @@ export function useChatSession({ dryRun = false }: UseChatSessionOptions = {}) {
     hasActiveStream,
     hasMoreMessages,
     oldestSequence,
+    newestSequence,
+    forwardPaginated,
     isLoadingSession: sessionQuery.isLoading,
     isSessionError: sessionQuery.isError,
     createSession,
     isCreatingSession,
     refetchSession: sessionQuery.refetch,
+    sessionDryRun,
   };
 }
