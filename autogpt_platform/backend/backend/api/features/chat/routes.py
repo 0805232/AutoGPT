@@ -985,11 +985,12 @@ async def stream_chat_post(
         subscriber_queue = None
         first_chunk_yielded = False
         chunks_yielded = 0
-        # True for every exit path except GeneratorExit (client disconnect).
-        # On disconnect the backend turn is still running — releasing the lock
-        # there would reopen the infra-retry duplicate window. The 30 s TTL
-        # is the fallback. All other exits (normal finish, early return, error)
-        # should release so the user can re-send the same message.
+        # On client disconnect the message is already persisted in the DB but
+        # the executor hasn't yet acquired its cluster lock. Releasing the dedup
+        # lock immediately would let an infra retry (k8s, nginx) re-save the
+        # same message before the cluster lock blocks it, causing a duplicate
+        # DB entry. The 5 s TTL covers the ~1 s RabbitMQ-transit window.
+        # All other exits (normal finish, error) release immediately.
         release_dedup_lock_on_exit = True
         try:
             # Subscribe from the position we captured before enqueuing
@@ -1002,7 +1003,7 @@ async def stream_chat_post(
 
             if subscriber_queue is None:
                 yield StreamFinish().to_sse()
-                return  # finally releases dedup_lock
+                return
 
             # Read from the subscriber queue and yield to SSE
             logger.info(
@@ -1044,7 +1045,7 @@ async def stream_chat_post(
                                 }
                             },
                         )
-                        break  # finally releases dedup_lock
+                        break
 
                 except asyncio.TimeoutError:
                     yield StreamHeartbeat().to_sse()
@@ -1075,7 +1076,6 @@ async def stream_chat_post(
                 code="stream_error",
             ).to_sse()
             yield StreamFinish().to_sse()
-            # finally releases dedup_lock
         finally:
             if dedup_lock and release_dedup_lock_on_exit:
                 await dedup_lock.release()
