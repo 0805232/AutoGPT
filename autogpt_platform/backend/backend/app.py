@@ -35,6 +35,7 @@ def main(**kwargs):
     """
     Run all the processes required for the AutoGPT-server (REST and WebSocket APIs).
     """
+    import os
 
     from backend.api.rest_api import AgentServer
     from backend.api.ws_api import WebsocketServer
@@ -43,7 +44,7 @@ def main(**kwargs):
     from backend.executor import ExecutionManager, Scheduler
     from backend.notifications import NotificationManager
 
-    run_processes(
+    processes = [
         DatabaseManager().set_log_level("warning"),
         Scheduler(),
         NotificationManager(),
@@ -51,8 +52,15 @@ def main(**kwargs):
         AgentServer(),
         ExecutionManager(),
         CoPilotExecutor(),
-        **kwargs,
-    )
+    ]
+
+    if os.getenv("AUTOPILOT_BOT_DISCORD_TOKEN"):
+        from backend.copilot.bot.app import CoPilotBot
+
+        processes.append(CoPilotBot())
+        logger.info("CoPilotBot enabled (AUTOPILOT_BOT_DISCORD_TOKEN set)")
+
+    run_processes(*processes, **kwargs)
 
 
 if __name__ == "__main__":
