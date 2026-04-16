@@ -17,6 +17,7 @@ async def _fake_transaction():
     """
     yield MagicMock()
 
+
 from backend.api.features.platform_linking.auth import check_bot_api_key
 from backend.api.features.platform_linking.models import (
     BotChatRequest,
