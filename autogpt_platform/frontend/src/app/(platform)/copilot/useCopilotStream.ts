@@ -27,6 +27,9 @@ const RECONNECT_MAX_ATTEMPTS = 3;
 /** Minimum time the page must have been hidden to trigger a wake re-sync. */
 const WAKE_RESYNC_THRESHOLD_MS = 30_000;
 
+/** Max time (ms) the UI can stay in "reconnecting" state before forcing idle. */
+const RECONNECT_MAX_DURATION_MS = 30_000;
+
 interface UseCopilotStreamArgs {
   sessionId: string | null;
   hydratedMessages: UIMessage[] | undefined;
@@ -122,6 +125,15 @@ export function useCopilotStream({
   const [isSyncing, setIsSyncing] = useState(false);
   // Tracks the last time the page was hidden — used to detect sleep/wake gaps.
   const lastHiddenAtRef = useRef(Date.now());
+  // Monotonic counter that increments on each session switch — async callbacks
+  // from old sessions compare their captured epoch to detect staleness.
+  const sessionEpochRef = useRef(0);
+  // Timestamp when reconnection first started — used to force timeout.
+  const reconnectStartedAtRef = useRef<number | null>(null);
+  // Timer for the forced reconnect timeout.
+  const reconnectTimeoutTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  // Set when reconnecting has timed out (>30s).
+  const [reconnectTimedOut, setReconnectTimedOut] = useState(false);
 
   function handleReconnect(sid: string) {
     if (isReconnectScheduledRef.current || !sid) return;
@@ -137,6 +149,25 @@ export function useCopilotStream({
       return;
     }
 
+    // Track when reconnection first started for the forced timeout.
+    if (reconnectStartedAtRef.current === null) {
+      reconnectStartedAtRef.current = Date.now();
+      // Schedule a forced timeout — if reconnecting takes longer than
+      // RECONNECT_MAX_DURATION_MS, force the UI back to idle.
+      clearTimeout(reconnectTimeoutTimerRef.current);
+      reconnectTimeoutTimerRef.current = setTimeout(() => {
+        setReconnectExhausted(true);
+        setReconnectTimedOut(true);
+        reconnectStartedAtRef.current = null;
+        toast({
+          title: "Connection timed out",
+          description:
+            "AutoPilot may still be working. Refresh to check for updates.",
+          variant: "destructive",
+        });
+      }, RECONNECT_MAX_DURATION_MS);
+    }
+
     isReconnectScheduledRef.current = true;
     setIsReconnectScheduled(true);
     reconnectAttemptsRef.current = nextAttempt;
@@ -150,8 +181,12 @@ export function useCopilotStream({
     }
 
     const delay = RECONNECT_BASE_DELAY_MS * 2 ** (nextAttempt - 1);
+    const capturedEpoch = sessionEpochRef.current;
 
     reconnectTimerRef.current = setTimeout(() => {
+      // Bail if the session switched while the timer was pending.
+      if (sessionEpochRef.current !== capturedEpoch) return;
+
       isReconnectScheduledRef.current = false;
       setIsReconnectScheduled(false);
       // Strip the stale in-progress assistant message before resuming —
@@ -184,7 +219,11 @@ export function useCopilotStream({
     transport: transport ?? undefined,
     onFinish: async ({ isDisconnect, isAbort }) => {
       if (isAbort || !sessionId) return;
+      // User-initiated stops should not trigger reconnection.
+      if (isUserStoppingRef.current) return;
 
+      // The AI SDK rarely sets isDisconnect — treat ANY non-user-initiated
+      // finish as a potential disconnect when the backend stream is active.
       if (isDisconnect) {
         handleReconnect(sessionId);
         return;
@@ -419,19 +458,34 @@ export function useCopilotStream({
     };
   }, [refetchSession, setMessages]);
 
-  // Hydrate messages from REST API when not actively streaming
+  // Hydrate messages from REST API when not actively streaming.
+  // Sets hydrateCompletedRef so the resume effect knows it's safe to proceed.
   useEffect(() => {
-    if (!hydratedMessages || hydratedMessages.length === 0) return;
+    if (!hydratedMessages) return;
     if (status === "streaming" || status === "submitted") return;
     if (isReconnectScheduled) return;
-    setMessages((prev) => {
-      if (prev.length >= hydratedMessages.length) return prev;
-      return deduplicateMessages(hydratedMessages);
-    });
+    if (hydratedMessages.length > 0) {
+      setMessages((prev) => {
+        if (prev.length >= hydratedMessages.length) return prev;
+        return deduplicateMessages(hydratedMessages);
+      });
+    }
+    hydrateCompletedRef.current = true;
+    // Flush any resume that was waiting for hydration to finish.
+    if (pendingResumeRef.current) {
+      const pendingResume = pendingResumeRef.current;
+      pendingResumeRef.current = null;
+      pendingResume();
+    }
   }, [hydratedMessages, setMessages, status, isReconnectScheduled]);
 
   // Track resume state per session
   const hasResumedRef = useRef<Map<string, boolean>>(new Map());
+
+  // Coordination: hydration must complete before resume fires.
+  // Prevents duplicate messages / missing content from the two effects racing.
+  const hydrateCompletedRef = useRef(false);
+  const pendingResumeRef = useRef<(() => void) | null>(null);
 
   // Clean up reconnect state on session switch.
   // Abort the old stream's in-flight fetch and tell the backend to release
@@ -441,21 +495,24 @@ export function useCopilotStream({
     const prevSid = prevStreamSessionRef.current;
     prevStreamSessionRef.current = sessionId;
 
+    // Increment epoch so stale async callbacks from the old session bail out.
+    sessionEpochRef.current += 1;
+    const currentEpoch = sessionEpochRef.current;
+
     const isSwitching = Boolean(prevSid && prevSid !== sessionId);
     if (isSwitching) {
       // Mark BEFORE stopping so the old stream's async onError (which fires
       // after the abort) sees the flag and short-circuits the reconnect path.
-      // Without this, the AbortError can queue a reconnect against the new
-      // session's `sessionId` (captured in the fresh onError closure).
       isUserStoppingRef.current = true;
       sdkStopRef.current();
       disconnectSessionStream(prevSid!);
       // Schedule the reset as a task (not a microtask) so it runs AFTER the
-      // aborted fetch's onError has fired — otherwise the new session would
-      // be stuck with the "user stopping" flag set, preventing auto-resume
-      // when hydration detects an active backend stream.
+      // aborted fetch's onError has fired — but verify the epoch hasn't
+      // changed again (rapid session switches).
       setTimeout(() => {
-        isUserStoppingRef.current = false;
+        if (sessionEpochRef.current === currentEpoch) {
+          isUserStoppingRef.current = false;
+        }
       }, 0);
     } else {
       isUserStoppingRef.current = false;
@@ -463,18 +520,26 @@ export function useCopilotStream({
 
     clearTimeout(reconnectTimerRef.current);
     reconnectTimerRef.current = undefined;
+    clearTimeout(reconnectTimeoutTimerRef.current);
+    reconnectTimeoutTimerRef.current = undefined;
     reconnectAttemptsRef.current = 0;
+    reconnectStartedAtRef.current = null;
     isReconnectScheduledRef.current = false;
     setIsReconnectScheduled(false);
     setRateLimitMessage(null);
     hasShownDisconnectToast.current = false;
     lastSubmittedMsgRef.current = null;
     setReconnectExhausted(false);
+    setReconnectTimedOut(false);
     setIsSyncing(false);
     hasResumedRef.current.clear();
+    hydrateCompletedRef.current = false;
+    pendingResumeRef.current = null;
     return () => {
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = undefined;
+      clearTimeout(reconnectTimeoutTimerRef.current);
+      reconnectTimeoutTimerRef.current = undefined;
     };
   }, [sessionId]);
 
@@ -497,6 +562,10 @@ export function useCopilotStream({
       if (status === "ready") {
         reconnectAttemptsRef.current = 0;
         hasShownDisconnectToast.current = false;
+        reconnectStartedAtRef.current = null;
+        clearTimeout(reconnectTimeoutTimerRef.current);
+        reconnectTimeoutTimerRef.current = undefined;
+        setReconnectTimedOut(false);
         // Intentionally NOT clearing lastSubmittedMsgRef here: keeping the last
         // submitted text prevents getSendSuppressionReason from allowing a
         // duplicate POST of the same message immediately after a successful turn
@@ -511,6 +580,7 @@ export function useCopilotStream({
   // Resume an active stream AFTER hydration completes.
   // IMPORTANT: Only runs when page loads with existing active stream (reconnection).
   // Does NOT run when new streams start during active conversation.
+  // Gated on hydrateCompletedRef to prevent racing with the hydration effect.
   useEffect(() => {
     if (!sessionId) return;
     if (!hasActiveStream) return;
@@ -525,21 +595,30 @@ export function useCopilotStream({
     // Don't resume a stream the user just cancelled
     if (isUserStoppingRef.current) return;
 
-    // Mark as resumed immediately to prevent race conditions
-    hasResumedRef.current.set(sessionId, true);
+    function doResume() {
+      if (!sessionId || hasResumedRef.current.get(sessionId)) return;
+      if (isUserStoppingRef.current) return;
 
-    // Remove the in-progress assistant message before resuming.
-    // The backend replays the stream from "0-0", so keeping the hydrated
-    // version would cause the old parts to overlap with replayed parts.
-    // Previous turns are preserved; the stream recreates the current turn.
-    setMessages((prev) => {
-      if (prev.length > 0 && prev[prev.length - 1].role === "assistant") {
-        return prev.slice(0, -1);
-      }
-      return prev;
-    });
+      hasResumedRef.current.set(sessionId, true);
 
-    resumeStreamRef.current();
+      setMessages((prev) => {
+        if (prev.length > 0 && prev[prev.length - 1].role === "assistant") {
+          return prev.slice(0, -1);
+        }
+        return prev;
+      });
+
+      resumeStreamRef.current();
+    }
+
+    // Wait for hydration to complete before resuming to prevent
+    // the two effects from racing (duplicate messages / missing content).
+    if (!hydrateCompletedRef.current) {
+      pendingResumeRef.current = doResume;
+      return;
+    }
+
+    doResume();
   }, [sessionId, hasActiveStream, hydratedMessages, status, setMessages]);
 
   // Clear messages when session is null
@@ -572,6 +651,7 @@ export function useCopilotStream({
     status,
     error: isReconnecting || isUserStoppingRef.current ? undefined : error,
     isReconnecting,
+    reconnectTimedOut,
     isSyncing,
     isUserStoppingRef,
     rateLimitMessage,
