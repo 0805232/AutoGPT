@@ -1239,9 +1239,7 @@ def _session_messages_to_transcript(messages: list[ChatMessage]) -> str:
                 # Malformed tool message — no tool_call_id to link to an
                 # assistant tool_use block.  Skip to avoid an unmatched
                 # tool_result entry in the builder (which would confuse --resume).
-                logger.warning(
-                    "[SDK] Skipping tool gap message with no tool_call_id"
-                )
+                logger.warning("[SDK] Skipping tool gap message with no tool_call_id")
     return builder.to_jsonl()
 
 
