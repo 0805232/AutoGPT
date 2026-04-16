@@ -1,4 +1,4 @@
-"""Pydantic models for the platform bot linking API."""
+"""Pydantic models for platform_linking requests and responses."""
 
 from datetime import datetime
 from enum import Enum
@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 
 class Platform(str, Enum):
-    """Supported platform types (mirrors Prisma PlatformType)."""
+    """Mirror of the Prisma PlatformType enum."""
 
     DISCORD = "DISCORD"
     TELEGRAM = "TELEGRAM"
@@ -20,8 +20,6 @@ class Platform(str, Enum):
 
 
 class LinkType(str, Enum):
-    """Whether a token/link targets a server (group chat) or a user (DM)."""
-
     SERVER = "SERVER"
     USER = "USER"
 
@@ -30,14 +28,6 @@ class LinkType(str, Enum):
 
 
 class CreateLinkTokenRequest(BaseModel):
-    """
-    Request from the bot service to create a linking token for a server.
-
-    Called when no PlatformLink exists for the given server. The bot sends
-    the resulting link URL to the user who triggered the interaction — they
-    become the server owner when they complete the link.
-    """
-
     platform: Platform = Field(description="Platform name")
     platform_server_id: str = Field(
         description="Server/guild/group ID on the platform",
@@ -67,8 +57,6 @@ class CreateLinkTokenRequest(BaseModel):
 
 
 class CreateUserLinkTokenRequest(BaseModel):
-    """Request from the bot service to create a DM (user-level) linking token."""
-
     platform: Platform
     platform_user_id: str = Field(
         description="Platform user ID of the person linking their DMs",
@@ -83,8 +71,6 @@ class CreateUserLinkTokenRequest(BaseModel):
 
 
 class ResolveServerRequest(BaseModel):
-    """Check whether a platform server is linked to an AutoGPT owner account."""
-
     platform: Platform
     platform_server_id: str = Field(
         description="Server/guild/group ID to look up",
@@ -94,8 +80,6 @@ class ResolveServerRequest(BaseModel):
 
 
 class ResolveUserRequest(BaseModel):
-    """Check whether an individual platform user has linked their DMs."""
-
     platform: Platform
     platform_user_id: str = Field(
         description="Platform user ID to look up",
@@ -105,21 +89,14 @@ class ResolveUserRequest(BaseModel):
 
 
 class BotChatRequest(BaseModel):
-    """
-    Request from the bot to send a message on behalf of a platform user.
-
-    Exactly one of (platform_server_id) or () must resolve via context:
-      - SERVER context: both platform_server_id and platform_user_id set.
-        Billed to the server owner; per-user sessions.
-      - DM context: platform_server_id is null, platform_user_id set.
-        Billed to that user's own account.
-    """
+    """Bot message request. If ``platform_server_id`` is set, the turn is
+    billed to that server's owner; otherwise billed to ``platform_user_id``
+    (DM context)."""
 
     platform: Platform
     platform_server_id: str | None = Field(
         default=None,
         description="Server/guild/group ID — null for DM context",
-        # min_length only applies when value is a string; null stays valid.
         min_length=1,
         max_length=255,
     )
@@ -151,8 +128,6 @@ class LinkTokenStatusResponse(BaseModel):
 
 
 class LinkTokenInfoResponse(BaseModel):
-    """Non-sensitive display info for the frontend link page."""
-
     platform: str
     link_type: LinkType
     server_name: str | None = None
@@ -180,8 +155,6 @@ class PlatformUserLinkInfo(BaseModel):
 
 
 class ConfirmLinkResponse(BaseModel):
-    """Server-link confirmation result. link_type is always SERVER here."""
-
     success: bool
     link_type: LinkType = LinkType.SERVER
     platform: str
@@ -190,8 +163,6 @@ class ConfirmLinkResponse(BaseModel):
 
 
 class ConfirmUserLinkResponse(BaseModel):
-    """User-link (DM) confirmation result."""
-
     success: bool
     link_type: LinkType = LinkType.USER
     platform: str
@@ -202,7 +173,10 @@ class DeleteLinkResponse(BaseModel):
     success: bool
 
 
-class BotChatSessionResponse(BaseModel):
-    """Returned when creating a new session via the bot proxy."""
+class ChatTurnHandle(BaseModel):
+    """Subscribe keys for a pending copilot turn."""
 
     session_id: str
+    turn_id: str
+    user_id: str
+    subscribe_from: str = "0-0"

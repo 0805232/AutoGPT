@@ -155,3 +155,15 @@ class RedisError(Exception):
     """Raised when there is an error interacting with Redis"""
 
     pass
+
+
+class LinkAlreadyExistsError(ValueError):
+    """A platform_linking target (server or user) is already linked."""
+
+
+class LinkTokenExpiredError(ValueError):
+    """A platform_linking token has expired or been consumed."""
+
+
+class LinkFlowMismatchError(ValueError):
+    """A platform_linking token was used for the wrong flow (server vs user)."""

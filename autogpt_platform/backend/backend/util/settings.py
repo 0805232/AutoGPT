@@ -252,6 +252,11 @@ class Config(UpdateTrackingModel["Config"], BaseSettings):
         description="The port for notification service daemon to run on",
     )
 
+    platform_linking_service_port: int = Field(
+        default=8009,
+        description="The port for the platform_linking manager daemon to run on",
+    )
+
     otto_api_url: str = Field(
         default="",
         description="The URL for the Otto API service",
@@ -647,13 +652,6 @@ class Secrets(UpdateTrackingModel["Secrets"], BaseSettings):
     did_api_key: str = Field(default="", description="D-ID API Key")
     revid_api_key: str = Field(default="", description="revid.ai API key")
     discord_bot_token: str = Field(default="", description="Discord bot token")
-
-    platform_bot_api_key: str = Field(
-        default="",
-        description="Shared secret validated on bot-facing platform-linking "
-        "endpoints (sent by the bot in the X-Bot-API-Key header). When unset "
-        "in a non-auth-enabled environment, auth is bypassed with a warning.",
-    )
 
     smtp_server: str = Field(default="", description="SMTP server IP")
     smtp_port: str = Field(default="", description="SMTP server port")
