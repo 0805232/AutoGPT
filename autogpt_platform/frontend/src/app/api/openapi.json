@@ -6185,8 +6185,11 @@
         },
         "responses": {
           "200": {
-            "description": "Successful Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Server-Sent Events stream of the CoPilot response.",
+            "content": {
+              "application/json": { "schema": {} },
+              "text/event-stream": {}
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -6415,9 +6418,10 @@
     "/api/platform-linking/tokens/{token}/info": {
       "get": {
         "tags": ["platform-linking"],
-        "summary": "Get display info for a link token (no auth required)",
-        "description": "Display info for the frontend link page — platform, link type, server\nname if applicable. No auth: token has 32 bytes of entropy, 30-min TTL.",
-        "operationId": "getPlatform-linkingGet display info for a link token (no auth required)",
+        "summary": "Get display info for a link token",
+        "description": "Display info for the frontend link page (platform, link type, server\nname). JWT-authed so only logged-in users can probe token state.",
+        "operationId": "getPlatform-linkingGet display info for a link token",
+        "security": [{ "HTTPBearerJWT": [] }],
         "parameters": [
           {
             "name": "token",
@@ -6441,6 +6445,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/HTTP401NotAuthenticatedError"
           },
           "422": {
             "description": "Validation Error",
@@ -9581,7 +9588,7 @@
           "platform": { "$ref": "#/components/schemas/Platform" },
           "platform_server_id": {
             "anyOf": [
-              { "type": "string", "maxLength": 255 },
+              { "type": "string", "maxLength": 255, "minLength": 1 },
               { "type": "null" }
             ],
             "title": "Platform Server Id",

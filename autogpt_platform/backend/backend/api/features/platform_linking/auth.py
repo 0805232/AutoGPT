@@ -2,7 +2,6 @@
 
 import hmac
 import logging
-import os
 from functools import lru_cache
 
 from fastapi import HTTPException, Security
@@ -13,41 +12,37 @@ from backend.util.settings import Settings
 logger = logging.getLogger(__name__)
 
 
-# APIKeyHeader lets FastAPI emit a proper `X-Bot-API-Key` security scheme in
-# the OpenAPI spec. auto_error=False because dev-mode allows keyless requests
-# when enable_auth is False — we surface a 401 ourselves in check_bot_api_key.
+# APIKeyHeader lets FastAPI emit a proper X-Bot-API-Key security scheme in the
+# OpenAPI spec. auto_error=False because dev-mode allows keyless requests when
+# enable_auth is False — we handle the error path inline so the warning lands.
 _bot_api_key_scheme = APIKeyHeader(name="X-Bot-API-Key", auto_error=False)
 
 
 @lru_cache(maxsize=1)
 def _auth_enabled() -> bool:
-    """Cached read of Settings().config.enable_auth.
-
-    Called on every unauthenticated bot request — instantiating Settings each
-    time is expensive (reads env + pydantic validation). Auth-enabled doesn't
-    flip at runtime, so caching is safe.
-    """
+    """Cached — auth-enabled doesn't flip at runtime."""
     return Settings().config.enable_auth
 
 
 async def get_bot_api_key(
     api_key: str | None = Security(_bot_api_key_scheme),
 ) -> str | None:
-    """Extract the bot API key from the X-Bot-API-Key header.
+    """FastAPI dependency — validates the X-Bot-API-Key header.
 
-    Declared via APIKeyHeader so routes using ``Security(get_bot_api_key)``
-    get the X-Bot-API-Key scheme on their OpenAPI operation.
+    Use with ``Security(get_bot_api_key)`` on a route — any unauthorized
+    request is rejected here, no per-endpoint follow-up call needed.
     """
+    check_bot_api_key(api_key)
     return api_key
 
 
 def check_bot_api_key(api_key: str | None) -> None:
-    """Validate the bot API key. Uses constant-time comparison.
+    """Raise on invalid/missing bot API key; no-op in dev with auth disabled.
 
-    Reads the key from env on each call so rotated secrets take effect
-    without restarting the process.
+    Exposed separately so tests can exercise the validation logic directly
+    without going through FastAPI's dependency machinery.
     """
-    configured_key = os.getenv("PLATFORM_BOT_API_KEY", "")
+    configured_key = Settings().secrets.platform_bot_api_key
 
     if not configured_key:
         if _auth_enabled():
@@ -55,12 +50,12 @@ def check_bot_api_key(api_key: str | None) -> None:
                 status_code=503,
                 detail="Bot API key not configured.",
             )
-        # Auth disabled (local dev) — allow without key, but warn so this
-        # is never silent in staging or misconfigured production deployments.
+        # Auth disabled (local dev) — allow without key, but warn so it's
+        # never silent in staging or misconfigured production deployments.
         logger.warning(
             "PLATFORM_BOT_API_KEY is not set and auth is disabled — "
-            "all bot-facing platform linking endpoints are unauthenticated. "
-            "Set PLATFORM_BOT_API_KEY in your environment for any non-local deployment."
+            "bot-facing platform linking endpoints are unauthenticated. "
+            "Set it in your environment for any non-local deployment."
         )
         return
 

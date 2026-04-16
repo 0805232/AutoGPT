@@ -13,7 +13,6 @@ link their DMs separately.
 """
 
 import logging
-import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -23,9 +22,10 @@ from fastapi import APIRouter, HTTPException, Path, Security
 from prisma.models import PlatformLink, PlatformLinkToken, PlatformUserLink
 
 from backend.data.db import transaction
+from backend.util.settings import Settings
 
 from . import find_server_link, find_user_link
-from .auth import check_bot_api_key, get_bot_api_key
+from .auth import get_bot_api_key
 from .models import (
     ConfirmLinkResponse,
     ConfirmUserLinkResponse,
@@ -56,7 +56,7 @@ TokenPath = Annotated[
 
 
 def _link_base_url() -> str:
-    return os.getenv("PLATFORM_LINK_BASE_URL", "https://platform.agpt.co/link")
+    return Settings().config.platform_link_base_url
 
 
 # ── Bot-facing endpoints (API key auth) ───────────────────────────────
@@ -65,14 +65,13 @@ def _link_base_url() -> str:
 @router.post(
     "/tokens",
     response_model=LinkTokenResponse,
+    dependencies=[Security(get_bot_api_key)],
     summary="Create a SERVER link token for an unlinked server",
 )
 async def create_link_token(
     request: CreateLinkTokenRequest,
-    x_bot_api_key: str | None = Security(get_bot_api_key),
 ) -> LinkTokenResponse:
     """Bot creates a token to claim a server. First user to confirm becomes owner."""
-    check_bot_api_key(x_bot_api_key)
 
     platform = request.platform.value
 
@@ -131,14 +130,13 @@ async def create_link_token(
 @router.post(
     "/user-tokens",
     response_model=LinkTokenResponse,
+    dependencies=[Security(get_bot_api_key)],
     summary="Create a USER link token for an unlinked DM user",
 )
 async def create_user_link_token(
     request: CreateUserLinkTokenRequest,
-    x_bot_api_key: str | None = Security(get_bot_api_key),
 ) -> LinkTokenResponse:
     """Bot creates a token for an individual to link their DMs with the bot."""
-    check_bot_api_key(x_bot_api_key)
 
     platform = request.platform.value
 
@@ -193,14 +191,13 @@ async def create_user_link_token(
 @router.get(
     "/tokens/{token}/status",
     response_model=LinkTokenStatusResponse,
+    dependencies=[Security(get_bot_api_key)],
     summary="Check if a link token has been consumed",
 )
 async def get_link_token_status(
     token: TokenPath,
-    x_bot_api_key: str | None = Security(get_bot_api_key),
 ) -> LinkTokenStatusResponse:
     """Bot polls to check if the user has completed linking."""
-    check_bot_api_key(x_bot_api_key)
 
     link_token = await PlatformLinkToken.prisma().find_unique(where={"token": token})
 
@@ -232,13 +229,12 @@ async def get_link_token_status(
 @router.get(
     "/tokens/{token}/info",
     response_model=LinkTokenInfoResponse,
-    summary="Get display info for a link token (no auth required)",
+    dependencies=[Security(auth.requires_user)],
+    summary="Get display info for a link token",
 )
 async def get_link_token_info(token: TokenPath) -> LinkTokenInfoResponse:
-    """
-    Display info for the frontend link page — platform, link type, server
-    name if applicable. No auth: token has 32 bytes of entropy, 30-min TTL.
-    """
+    """Display info for the frontend link page (platform, link type, server
+    name). JWT-authed so only logged-in users can probe token state."""
     link_token = await PlatformLinkToken.prisma().find_unique(where={"token": token})
 
     if not link_token or link_token.usedAt is not None:
@@ -257,14 +253,13 @@ async def get_link_token_info(token: TokenPath) -> LinkTokenInfoResponse:
 @router.post(
     "/resolve",
     response_model=ResolveResponse,
+    dependencies=[Security(get_bot_api_key)],
     summary="Check whether a platform server is linked",
 )
 async def resolve_platform_server(
     request: ResolveServerRequest,
-    x_bot_api_key: str | None = Security(get_bot_api_key),
 ) -> ResolveResponse:
     """Called by the bot for every message in a server/group channel."""
-    check_bot_api_key(x_bot_api_key)
 
     link = await find_server_link(request.platform.value, request.platform_server_id)
     return ResolveResponse(linked=link is not None)
@@ -273,14 +268,13 @@ async def resolve_platform_server(
 @router.post(
     "/resolve-user",
     response_model=ResolveResponse,
+    dependencies=[Security(get_bot_api_key)],
     summary="Check whether an individual's DMs are linked",
 )
 async def resolve_platform_user(
     request: ResolveUserRequest,
-    x_bot_api_key: str | None = Security(get_bot_api_key),
 ) -> ResolveResponse:
     """Called by the bot for every DM with an individual."""
-    check_bot_api_key(x_bot_api_key)
 
     link = await find_user_link(request.platform.value, request.platform_user_id)
     return ResolveResponse(linked=link is not None)

@@ -6,18 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-
-@asynccontextmanager
-async def _fake_transaction():
-    """Stub for backend.data.db.transaction used in route tests.
-
-    The real transaction() opens a Prisma tx which binds asyncio primitives to
-    the running event loop. Tests run in their own loops via pytest-asyncio, so
-    we swap this in to avoid cross-loop errors.
-    """
-    yield MagicMock()
-
-
 from backend.api.features.platform_linking.auth import check_bot_api_key
 from backend.api.features.platform_linking.models import (
     BotChatRequest,
@@ -34,6 +22,17 @@ from backend.api.features.platform_linking.models import (
 )
 
 
+@asynccontextmanager
+async def _fake_transaction():
+    """Stub for backend.data.db.transaction used in route tests.
+
+    The real transaction() opens a Prisma tx which binds asyncio primitives to
+    the running event loop. Tests run in their own loops via pytest-asyncio, so
+    we swap this in to avoid cross-loop errors.
+    """
+    yield MagicMock()
+
+
 class TestPlatformEnum:
     def test_all_platforms_exist(self):
         assert Platform.DISCORD.value == "DISCORD"
@@ -46,38 +45,44 @@ class TestPlatformEnum:
 
 
 class TestBotApiKeyAuth:
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": ""}, clear=False)
+    @staticmethod
+    def _mock_settings(cls_mock, *, key: str, enable_auth: bool) -> None:
+        cls_mock.return_value.config.enable_auth = enable_auth
+        cls_mock.return_value.secrets.platform_bot_api_key = key
+
     @patch("backend.api.features.platform_linking.auth.Settings")
     def test_no_key_configured_allows_when_auth_disabled(self, mock_settings_cls):
         from backend.api.features.platform_linking.auth import _auth_enabled
 
         _auth_enabled.cache_clear()
-        mock_settings_cls.return_value.config.enable_auth = False
+        self._mock_settings(mock_settings_cls, key="", enable_auth=False)
         check_bot_api_key(None)
 
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": ""}, clear=False)
     @patch("backend.api.features.platform_linking.auth.Settings")
     def test_no_key_configured_rejects_when_auth_enabled(self, mock_settings_cls):
         from backend.api.features.platform_linking.auth import _auth_enabled
 
         _auth_enabled.cache_clear()
-        mock_settings_cls.return_value.config.enable_auth = True
+        self._mock_settings(mock_settings_cls, key="", enable_auth=True)
         with pytest.raises(HTTPException) as exc_info:
             check_bot_api_key(None)
         assert exc_info.value.status_code == 503
 
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": "secret123"}, clear=False)
-    def test_valid_key(self):
+    @patch("backend.api.features.platform_linking.auth.Settings")
+    def test_valid_key(self, mock_settings_cls):
+        self._mock_settings(mock_settings_cls, key="secret123", enable_auth=True)
         check_bot_api_key("secret123")
 
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": "secret123"}, clear=False)
-    def test_invalid_key_rejected(self):
+    @patch("backend.api.features.platform_linking.auth.Settings")
+    def test_invalid_key_rejected(self, mock_settings_cls):
+        self._mock_settings(mock_settings_cls, key="secret123", enable_auth=True)
         with pytest.raises(HTTPException) as exc_info:
             check_bot_api_key("wrong")
         assert exc_info.value.status_code == 401
 
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": "secret123"}, clear=False)
-    def test_missing_key_rejected(self):
+    @patch("backend.api.features.platform_linking.auth.Settings")
+    def test_missing_key_rejected(self, mock_settings_cls):
+        self._mock_settings(mock_settings_cls, key="secret123", enable_auth=True)
         with pytest.raises(HTTPException) as exc_info:
             check_bot_api_key(None)
         assert exc_info.value.status_code == 401
@@ -267,7 +272,6 @@ class TestResolveEndpoint:
                     platform=Platform.DISCORD,
                     platform_server_id="guild_123",
                 ),
-                x_bot_api_key="testkey",
             )
 
         assert result.linked is True
@@ -286,25 +290,12 @@ class TestResolveEndpoint:
                     platform=Platform.DISCORD,
                     platform_server_id="guild_unknown",
                 ),
-                x_bot_api_key="testkey",
             )
 
         assert result.linked is False
 
-    @pytest.mark.asyncio
-    @patch.dict("os.environ", {"PLATFORM_BOT_API_KEY": "testkey"}, clear=False)
-    async def test_resolve_rejects_wrong_api_key(self):
-        from backend.api.features.platform_linking.routes import resolve_platform_server
-
-        with pytest.raises(HTTPException) as exc_info:
-            await resolve_platform_server(
-                ResolveServerRequest(
-                    platform=Platform.DISCORD,
-                    platform_server_id="guild_123",
-                ),
-                x_bot_api_key="wrong_key",
-            )
-        assert exc_info.value.status_code == 401
+    # NB: wrong-key rejection is covered by TestBotApiKeyAuth — auth now runs
+    # at the FastAPI dependency layer so we can't reach it via a direct call.
 
 
 class TestCreateLinkTokenEndpoint:
@@ -338,7 +329,6 @@ class TestCreateLinkTokenEndpoint:
                     platform_user_id="user_456",
                     server_name="Test Server",
                 ),
-                x_bot_api_key="testkey",
             )
 
         assert result.token
@@ -362,7 +352,6 @@ class TestCreateLinkTokenEndpoint:
                         platform_server_id="guild_already_linked",
                         platform_user_id="user_456",
                     ),
-                    x_bot_api_key="testkey",
                 )
 
         assert exc_info.value.status_code == 409
@@ -398,7 +387,6 @@ class TestCreateUserLinkTokenEndpoint:
                     platform_user_id="user_456",
                     platform_username="Bently",
                 ),
-                x_bot_api_key="testkey",
             )
 
         assert result.token
@@ -420,7 +408,6 @@ class TestCreateUserLinkTokenEndpoint:
                         platform=Platform.DISCORD,
                         platform_user_id="user_already_linked",
                     ),
-                    x_bot_api_key="testkey",
                 )
 
         assert exc_info.value.status_code == 409
@@ -441,7 +428,6 @@ class TestResolveUserEndpoint:
                     platform=Platform.DISCORD,
                     platform_user_id="user_456",
                 ),
-                x_bot_api_key="testkey",
             )
 
         assert result.linked is True
@@ -460,7 +446,6 @@ class TestResolveUserEndpoint:
                     platform=Platform.DISCORD,
                     platform_user_id="user_unknown",
                 ),
-                x_bot_api_key="testkey",
             )
 
         assert result.linked is False
@@ -479,7 +464,7 @@ class TestGetLinkTokenStatusEndpoint:
         ) as mock_model:
             mock_model.prisma.return_value.find_unique = AsyncMock(return_value=None)
             with pytest.raises(HTTPException) as exc_info:
-                await get_link_token_status(token="abc123", x_bot_api_key="testkey")
+                await get_link_token_status(token="abc123")
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -498,9 +483,7 @@ class TestGetLinkTokenStatusEndpoint:
             mock_model.prisma.return_value.find_unique = AsyncMock(
                 return_value=fake_token
             )
-            result = await get_link_token_status(
-                token="abc123", x_bot_api_key="testkey"
-            )
+            result = await get_link_token_status(token="abc123")
 
         assert result.status == "pending"
 
@@ -520,9 +503,7 @@ class TestGetLinkTokenStatusEndpoint:
             mock_model.prisma.return_value.find_unique = AsyncMock(
                 return_value=fake_token
             )
-            result = await get_link_token_status(
-                token="abc123", x_bot_api_key="testkey"
-            )
+            result = await get_link_token_status(token="abc123")
 
         assert result.status == "expired"
 
@@ -552,9 +533,7 @@ class TestGetLinkTokenStatusEndpoint:
             mock_model.prisma.return_value.find_unique = AsyncMock(
                 return_value=fake_token
             )
-            result = await get_link_token_status(
-                token="abc123", x_bot_api_key="testkey"
-            )
+            result = await get_link_token_status(token="abc123")
 
         assert result.status == "linked"
 
@@ -585,9 +564,7 @@ class TestGetLinkTokenStatusEndpoint:
             mock_model.prisma.return_value.find_unique = AsyncMock(
                 return_value=fake_token
             )
-            result = await get_link_token_status(
-                token="abc123", x_bot_api_key="testkey"
-            )
+            result = await get_link_token_status(token="abc123")
 
         assert result.status == "expired"
 

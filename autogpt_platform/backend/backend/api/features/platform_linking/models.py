@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 class Platform(str, Enum):
@@ -119,6 +119,8 @@ class BotChatRequest(BaseModel):
     platform_server_id: str | None = Field(
         default=None,
         description="Server/guild/group ID — null for DM context",
+        # min_length only applies when value is a string; null stays valid.
+        min_length=1,
         max_length=255,
     )
     platform_user_id: str = Field(
@@ -133,12 +135,6 @@ class BotChatRequest(BaseModel):
         default=None,
         description="Existing CoPilot session ID. If omitted, a new session is created.",
     )
-
-    @model_validator(mode="after")
-    def _validate_server_id_length(self) -> "BotChatRequest":
-        if self.platform_server_id is not None and not self.platform_server_id:
-            raise ValueError("platform_server_id cannot be an empty string")
-        return self
 
 
 # ── Response Models ────────────────────────────────────────────────────

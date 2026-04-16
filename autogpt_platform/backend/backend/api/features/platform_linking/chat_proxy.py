@@ -28,7 +28,7 @@ from backend.copilot.model import create_chat_session, get_chat_session
 from backend.copilot.response_model import StreamError, StreamFinish
 
 from . import find_server_link, find_user_link
-from .auth import check_bot_api_key, get_bot_api_key
+from .auth import get_bot_api_key
 from .models import BotChatRequest, BotChatSessionResponse
 
 logger = logging.getLogger(__name__)
@@ -66,15 +66,13 @@ async def _resolve_owner(request: BotChatRequest) -> str:
 @router.post(
     "/chat/session",
     response_model=BotChatSessionResponse,
+    dependencies=[Security(get_bot_api_key)],
     summary="Create a CoPilot session for a platform user (bot-facing)",
 )
 async def bot_create_session(
     request: BotChatRequest,
-    x_bot_api_key: str | None = Security(get_bot_api_key),
 ) -> BotChatSessionResponse:
     """Create a new CoPilot session owned by the resolved AutoGPT account."""
-    check_bot_api_key(x_bot_api_key)
-
     owner_user_id = await _resolve_owner(request)
     session = await create_chat_session(owner_user_id, dry_run=False)
 
@@ -91,15 +89,17 @@ async def bot_create_session(
 
 @router.post(
     "/chat/stream",
+    dependencies=[Security(get_bot_api_key)],
     summary="Stream a CoPilot response for a platform user (bot-facing)",
+    responses={
+        200: {
+            "content": {"text/event-stream": {}},
+            "description": "Server-Sent Events stream of the CoPilot response.",
+        },
+    },
 )
-async def bot_chat_stream(
-    request: BotChatRequest,
-    x_bot_api_key: str | None = Security(get_bot_api_key),
-):
+async def bot_chat_stream(request: BotChatRequest):
     """Send a message to CoPilot and stream the response as SSE."""
-    check_bot_api_key(x_bot_api_key)
-
     owner_user_id = await _resolve_owner(request)
 
     session_id = request.session_id
@@ -142,6 +142,13 @@ async def bot_chat_stream(
             )
 
             if subscriber_queue is None:
+                # Couldn't subscribe — make sure the session we just created
+                # doesn't sit in 'running' until its Redis TTL expires.
+                await stream_registry.mark_session_completed(
+                    session_id,
+                    error_message="Failed to subscribe to stream",
+                    skip_error_publish=True,
+                )
                 yield StreamFinish().to_sse()
                 yield "data: [DONE]\n\n"
                 return
@@ -189,8 +196,6 @@ async def bot_chat_stream(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            # Disable proxy buffering (nginx) so SSE chunks flush immediately.
-            "X-Accel-Buffering": "no",
             "X-Session-Id": session_id,
         },
     )

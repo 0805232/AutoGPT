@@ -2,9 +2,5 @@
 *.ign.*
 .application.logs
 
-# CoPilot bot service
-copilot-bot/node_modules/
-copilot-bot/dist/
-
-# Claude Code local settings
-.claude/
+# Claude Code local settings only — the rest of .claude/ is shared (skills etc.)
+.claude/settings.local.json
