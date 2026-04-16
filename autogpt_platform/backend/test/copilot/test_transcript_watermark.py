@@ -91,9 +91,9 @@ async def test_no_gap_fill_when_watermark_is_current():
         session_id="test-session-id",
     )
 
-    assert "<conversation_history>" not in result_msg, (
-        "No gap-fill expected when watermark is current"
-    )
+    assert (
+        "<conversation_history>" not in result_msg
+    ), "No gap-fill expected when watermark is current"
     assert result_msg == "next message"
 
 
@@ -116,9 +116,9 @@ async def test_inflated_watermark_suppresses_gap_fill():
         session_id="test-session-id",
     )
 
-    assert "<conversation_history>" not in result_msg, (
-        "With inflated watermark, gap-fill is suppressed — this documents the bug"
-    )
+    assert (
+        "<conversation_history>" not in result_msg
+    ), "With inflated watermark, gap-fill is suppressed — this documents the bug"
 
 
 @pytest.mark.asyncio
@@ -135,6 +135,6 @@ async def test_fixed_watermark_fills_same_gap():
         session_id="test-session-id",
     )
 
-    assert "<conversation_history>" in result_msg, (
-        "With fixed watermark=26, gap-fill triggers and injects missing turns"
-    )
+    assert (
+        "<conversation_history>" in result_msg
+    ), "With fixed watermark=26, gap-fill triggers and injects missing turns"

@@ -98,6 +98,7 @@ from ..transcript import (
     cli_session_path,
     compact_transcript,
     download_transcript,
+    extract_context_messages,
     projects_base,
     read_compacted_entries,
     strip_for_upload,
@@ -985,7 +986,10 @@ def _process_cli_restore(
     content was invalid or the disk write failed (caller should skip --resume).
     """
     try:
-        raw_str = cli_restore.content.decode("utf-8")
+        raw_bytes = cli_restore.content
+        raw_str = (
+            raw_bytes.decode("utf-8") if isinstance(raw_bytes, bytes) else raw_bytes
+        )
     except UnicodeDecodeError:
         logger.warning(
             "%s CLI session content is not valid UTF-8, skipping", log_prefix
@@ -1265,6 +1269,7 @@ async def _build_query_message(
     transcript_msg_count: int,
     session_id: str,
     target_tokens: int | None = None,
+    prior_messages: "list[ChatMessage] | None" = None,
 ) -> tuple[str, bool]:
     """Build the query message with appropriate context.
 
@@ -1370,15 +1375,16 @@ async def _build_query_message(
             )
             return current_message, False
 
+        source = prior_messages if prior_messages is not None else prior
         logger.warning(
-            "[SDK] [%s] No --resume for %d-message session — compressing"
-            " full session history (pod affinity issue or first turn after"
-            " restore failure); target_tokens=%s",
+            "[SDK] [%s] No --resume for %d-message session — compressing context "
+            "(source=%s, target_tokens=%s)",
             session_id[:8],
             msg_count,
+            "transcript+gap" if prior_messages is not None else "full-db",
             target_tokens,
         )
-        compressed, was_compressed = await _compress_messages(prior, target_tokens)
+        compressed, was_compressed = await _compress_messages(source, target_tokens)
         history_context = _format_conversation_context(compressed)
         if history_context:
             logger.info(
@@ -2409,6 +2415,8 @@ class _RestoreResult:
     use_resume: bool = False
     resume_file: str | None = None
     transcript_msg_count: int = 0
+    baseline_download: "TranscriptDownload | None" = None
+    context_messages: "list[ChatMessage] | None" = None
 
 
 async def _restore_cli_session_for_turn(
@@ -2450,10 +2458,12 @@ async def _restore_cli_session_for_turn(
     # stripped fields) that may not be valid for --resume.
     if cli_restore is not None and cli_restore.mode != "sdk":
         logger.info(
-            "%s Transcript written by mode=%r, skipping --resume — will reconstruct from DB",
+            "%s Transcript written by mode=%r — skipping --resume, "
+            "will use transcript content + gap for context",
             log_prefix,
             cli_restore.mode,
         )
+        result.baseline_download = cli_restore  # keep for extract_context_messages
         cli_restore = None
 
     # Validate, strip, and write to disk — delegate to helper to reduce
@@ -2501,33 +2511,47 @@ async def _restore_cli_session_for_turn(
         result.transcript_msg_count = cli_restore.message_count
         return result
 
-    # No CLI session in GCS — reconstruct from DB messages as last-resort fallback.
-    # The reconstruction uses TranscriptBuilder synthetic IDs (msg_sdk_...) which
-    # are NOT compatible with the Claude CLI's --resume mechanism.  We load the
-    # reconstructed content into the transcript_builder so the current turn has
-    # accurate state for the post-turn upload, but we do NOT attempt --resume.
-    # Context for this turn is injected by _build_query_message (use_resume=False path).
-    prior = session.messages[:-1]
-    reconstructed = _session_messages_to_transcript(prior)
-    if reconstructed:
-        result.transcript_content = reconstructed
-        transcript_builder.load_previous(reconstructed, log_prefix=log_prefix)
-        result.transcript_msg_count = len(prior)
-        result.transcript_covers_prefix = True
-        logger.info(
-            "%s Reconstructed transcript from %d session messages "
-            "(injecting context via message prefix — not using --resume)",
-            log_prefix,
-            len(prior),
-        )
-    else:
-        logger.warning(
-            "%s No session available and reconstruction produced empty output "
-            "(%d messages in session)",
-            log_prefix,
-            len(session.messages),
-        )
-        result.transcript_covers_prefix = False
+    # No valid --resume source (mode="baseline" or no GCS file).
+    # Build context from transcript content + gap, falling back to full DB.
+    # extract_context_messages handles both: non-None baseline_download uses
+    # the compacted transcript + gap; None falls back to all prior DB messages.
+    context_msgs = extract_context_messages(result.baseline_download, session.messages)
+    result.context_messages = context_msgs
+    result.transcript_msg_count = (
+        result.baseline_download.message_count
+        if result.baseline_download is not None
+        and result.baseline_download.message_count > 0
+        else len(session.messages) - 1
+    )
+    result.transcript_covers_prefix = True
+    logger.info(
+        "%s Context built from %s: %d messages (transcript watermark=%d, "
+        "will inject as <conversation_history>)",
+        log_prefix,
+        (
+            "baseline transcript + gap"
+            if result.baseline_download is not None
+            else "DB fallback"
+        ),
+        len(context_msgs),
+        result.transcript_msg_count,
+    )
+
+    # Load baseline transcript content into builder so the upload path has accurate state.
+    if result.baseline_download is not None:
+        try:
+            raw_for_builder = result.baseline_download.content
+            if isinstance(raw_for_builder, bytes):
+                raw_for_builder = raw_for_builder.decode("utf-8")
+            stripped = strip_for_upload(raw_for_builder)
+            if validate_transcript(stripped):
+                transcript_builder.load_previous(stripped, log_prefix=log_prefix)
+        except Exception as _load_err:
+            logger.debug(
+                "%s Could not load baseline transcript into builder: %s",
+                log_prefix,
+                _load_err,
+            )
 
     return result
 
@@ -2763,6 +2787,7 @@ async def stream_chat_completion_sdk(
         use_resume = _restore.use_resume
         resume_file = _restore.resume_file
         transcript_msg_count = _restore.transcript_msg_count
+        restore_context_messages = _restore.context_messages
 
         yield StreamStart(messageId=message_id, sessionId=session_id)
 
@@ -2981,6 +3006,7 @@ async def stream_chat_completion_sdk(
             use_resume,
             transcript_msg_count,
             session_id,
+            prior_messages=restore_context_messages,
         )
         # If files are attached, prepare them: images become vision
         # content blocks in the user message, other files go to sdk_cwd.
@@ -3623,9 +3649,17 @@ async def stream_chat_completion_sdk(
                     # watermark matches the DB count, so the next turn's
                     # gap-fill check (transcript_msg_count < msg_count-1)
                     # never triggers and the model silently loses context.
-                    # Fix: watermark = previous coverage + 2 (current
-                    # user+asst pair).  This accurately reflects what is
-                    # actually in the JSONL so any stale gap is detected.
+                    # Fix: when we have a reliable watermark from the
+                    # downloaded transcript (use_resume=True,
+                    # transcript_msg_count>0), set watermark =
+                    # previous_coverage + 2 (current user+asst pair).
+                    # This accurately reflects what is actually in the
+                    # JSONL so any stale gap is detected next turn.
+                    # For all other cases (fresh session, restore failed,
+                    # old-format meta with count=0, retry reset) fall back
+                    # to len(session.messages) to preserve original
+                    # behaviour and avoid triggering spurious gap-fills
+                    # on sessions whose watermark we cannot determine.
                     _final_use_resume = (
                         state.use_resume if state is not None else use_resume
                     )
@@ -3637,11 +3671,7 @@ async def stream_chat_completion_sdk(
                     if _final_use_resume and _final_tmsg_count > 0:
                         _jsonl_covered = _final_tmsg_count + 2
                     else:
-                        # Fresh session, restore failed, or retry that
-                        # reset transcript_msg_count to 0.  Use 2 so the
-                        # next turn triggers gap-fill when prior messages
-                        # exist in DB but not in the uploaded JSONL.
-                        _jsonl_covered = 2
+                        _jsonl_covered = len(session.messages)
                     await asyncio.shield(
                         upload_transcript(
                             user_id=user_id,

@@ -20,6 +20,7 @@ from .transcript import (
     _sanitize_id,
     _transcript_to_messages,
     detect_gap,
+    extract_context_messages,
     strip_for_upload,
     validate_transcript,
 )
@@ -1183,3 +1184,141 @@ class TestDetectGap:
         gap = detect_gap(dl, messages)
         assert len(gap) == 1
         assert gap[0].role == "assistant"
+
+
+# ---------------------------------------------------------------------------
+# extract_context_messages
+# ---------------------------------------------------------------------------
+
+
+def _make_valid_transcript(*roles: str) -> str:
+    """Build a minimal valid JSONL transcript with the given message roles."""
+    import json as stdlib_json
+
+    from .transcript import STOP_REASON_END_TURN
+
+    lines = []
+    parent = ""
+    for i, role in enumerate(roles):
+        uid = f"uid-{i}"
+        entry: dict = {
+            "type": role,
+            "uuid": uid,
+            "parentUuid": parent,
+            "message": {
+                "role": role,
+                "content": f"{role} content {i}",
+            },
+        }
+        if role == "assistant":
+            entry["message"]["id"] = f"msg_{i}"
+            entry["message"]["model"] = "test-model"
+            entry["message"]["type"] = "message"
+            entry["message"]["stop_reason"] = STOP_REASON_END_TURN
+            entry["message"]["content"] = [
+                {"type": "text", "text": f"assistant content {i}"}
+            ]
+        lines.append(stdlib_json.dumps(entry))
+        parent = uid
+    return "\n".join(lines) + "\n"
+
+
+class TestExtractContextMessages:
+    """``extract_context_messages`` returns the shared context primitive."""
+
+    def test_none_download_returns_prior(self):
+        """No download → falls back to all session messages except current turn."""
+        messages = _msgs("user", "assistant", "user")
+        result = extract_context_messages(None, messages)
+        assert result == messages[:-1]
+        assert len(result) == 2
+
+    def test_empty_content_download_returns_prior(self):
+        """Empty bytes content → falls back to all prior messages."""
+        dl = TranscriptDownload(content=b"", message_count=2, mode="sdk")
+        messages = _msgs("user", "assistant", "user")
+        result = extract_context_messages(dl, messages)
+        assert result == messages[:-1]
+
+    def test_valid_transcript_no_gap_returns_transcript_messages(self):
+        """Transcript covers all prior turns → only transcript messages returned."""
+        # Transcript: [user, assistant] — 2 messages
+        # Session: [user, assistant, user(current)] — watermark=2 covers prefix
+        transcript_content = _make_valid_transcript("user", "assistant")
+        dl = TranscriptDownload(
+            content=transcript_content.encode("utf-8"), message_count=2, mode="sdk"
+        )
+        messages = _msgs("user", "assistant", "user")
+        result = extract_context_messages(dl, messages)
+        # Transcript has 2 messages (user + assistant) and no gap
+        assert len(result) == 2
+        assert result[0].role == "user"
+        assert result[1].role == "assistant"
+
+    def test_valid_transcript_with_gap_returns_transcript_plus_gap(self):
+        """Transcript is stale → gap messages appended after transcript content."""
+        # Transcript: [user, assistant] — watermark=2
+        # Session: [user, assistant, user, assistant, user(current)]
+        # Gap: [user(2), assistant(3)] — positions 2 and 3
+        transcript_content = _make_valid_transcript("user", "assistant")
+        dl = TranscriptDownload(
+            content=transcript_content.encode("utf-8"), message_count=2, mode="sdk"
+        )
+        messages = _msgs("user", "assistant", "user", "assistant", "user")
+        result = extract_context_messages(dl, messages)
+        # 2 transcript messages + 2 gap messages = 4
+        assert len(result) == 4
+        assert result[0].role == "user"  # transcript user
+        assert result[1].role == "assistant"  # transcript assistant
+        assert result[2].role == "user"  # gap user
+        assert result[3].role == "assistant"  # gap assistant
+
+    def test_compact_summary_entries_preserved(self):
+        """``isCompactSummary=True`` entries survive ``_transcript_to_messages``."""
+        import json as stdlib_json
+
+        from .transcript import STOP_REASON_END_TURN
+
+        # Build a transcript where one entry is a compaction summary.
+        # isCompactSummary=True entries have type in STRIPPABLE_TYPES but are kept.
+        compact_entry = stdlib_json.dumps(
+            {
+                "type": "summary",
+                "uuid": "uid-compact",
+                "parentUuid": "",
+                "isCompactSummary": True,
+                "message": {
+                    "role": "user",
+                    "content": "COMPACT_SUMMARY_CONTENT",
+                },
+            }
+        )
+        assistant_entry = stdlib_json.dumps(
+            {
+                "type": "assistant",
+                "uuid": "uid-1",
+                "parentUuid": "uid-compact",
+                "message": {
+                    "role": "assistant",
+                    "id": "msg_1",
+                    "model": "test",
+                    "type": "message",
+                    "stop_reason": STOP_REASON_END_TURN,
+                    "content": [{"type": "text", "text": "response after compact"}],
+                },
+            }
+        )
+        content = compact_entry + "\n" + assistant_entry + "\n"
+        dl = TranscriptDownload(
+            content=content.encode("utf-8"), message_count=2, mode="sdk"
+        )
+        messages = _msgs("user", "assistant", "user")
+        result = extract_context_messages(dl, messages)
+        # Both the compact summary and the assistant response are present
+        assert len(result) == 2
+        roles = [m.role for m in result]
+        assert "user" in roles  # compact summary has role=user
+        assert "assistant" in roles
+        # The compact summary content is preserved
+        compact_msgs = [m for m in result if m.role == "user"]
+        assert any("COMPACT_SUMMARY_CONTENT" in (m.content or "") for m in compact_msgs)

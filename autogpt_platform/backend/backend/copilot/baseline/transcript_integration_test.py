@@ -95,7 +95,7 @@ class TestLoadPriorTranscript:
             "backend.copilot.baseline.service.download_transcript",
             new=AsyncMock(return_value=restore),
         ):
-            covers = await _load_prior_transcript(
+            covers, dl = await _load_prior_transcript(
                 user_id="user-1",
                 session_id="session-1",
                 session_messages=_make_session_messages("user", "assistant", "user"),
@@ -103,6 +103,8 @@ class TestLoadPriorTranscript:
             )
 
         assert covers is True
+        assert dl is not None
+        assert dl.message_count == 2
         assert builder.entry_count == 2
         assert builder.last_entry_type == "assistant"
 
@@ -120,7 +122,7 @@ class TestLoadPriorTranscript:
             "backend.copilot.baseline.service.download_transcript",
             new=AsyncMock(return_value=restore),
         ):
-            covers = await _load_prior_transcript(
+            covers, dl = await _load_prior_transcript(
                 user_id="user-1",
                 session_id="session-1",
                 session_messages=_make_session_messages(
@@ -130,6 +132,7 @@ class TestLoadPriorTranscript:
             )
 
         assert covers is True
+        assert dl is not None
         # 2 from transcript + 2 gap messages (user+assistant at positions 2,3)
         assert builder.entry_count == 4
 
@@ -140,7 +143,7 @@ class TestLoadPriorTranscript:
             "backend.copilot.baseline.service.download_transcript",
             new=AsyncMock(return_value=None),
         ):
-            covers = await _load_prior_transcript(
+            covers, dl = await _load_prior_transcript(
                 user_id="user-1",
                 session_id="session-1",
                 session_messages=_make_session_messages("user", "assistant"),
@@ -148,6 +151,7 @@ class TestLoadPriorTranscript:
             )
 
         assert covers is False
+        assert dl is None
         assert builder.is_empty
 
     @pytest.mark.asyncio
@@ -162,7 +166,7 @@ class TestLoadPriorTranscript:
             "backend.copilot.baseline.service.download_transcript",
             new=AsyncMock(return_value=restore),
         ):
-            covers = await _load_prior_transcript(
+            covers, dl = await _load_prior_transcript(
                 user_id="user-1",
                 session_id="session-1",
                 session_messages=_make_session_messages("user", "assistant"),
@@ -170,6 +174,7 @@ class TestLoadPriorTranscript:
             )
 
         assert covers is False
+        assert dl is None
         assert builder.is_empty
 
     @pytest.mark.asyncio
@@ -179,7 +184,7 @@ class TestLoadPriorTranscript:
             "backend.copilot.baseline.service.download_transcript",
             new=AsyncMock(side_effect=RuntimeError("boom")),
         ):
-            covers = await _load_prior_transcript(
+            covers, dl = await _load_prior_transcript(
                 user_id="user-1",
                 session_id="session-1",
                 session_messages=_make_session_messages("user", "assistant"),
@@ -187,6 +192,7 @@ class TestLoadPriorTranscript:
             )
 
         assert covers is False
+        assert dl is None
         assert builder.is_empty
 
     @pytest.mark.asyncio
@@ -202,7 +208,7 @@ class TestLoadPriorTranscript:
             "backend.copilot.baseline.service.download_transcript",
             new=AsyncMock(return_value=restore),
         ):
-            covers = await _load_prior_transcript(
+            covers, dl = await _load_prior_transcript(
                 user_id="user-1",
                 session_id="session-1",
                 session_messages=_make_session_messages(*["user"] * 20),
@@ -210,6 +216,7 @@ class TestLoadPriorTranscript:
             )
 
         assert covers is True
+        assert dl is not None
         assert builder.entry_count == 2
 
 
@@ -400,7 +407,7 @@ class TestRoundTrip:
             "backend.copilot.baseline.service.download_transcript",
             new=AsyncMock(return_value=restore),
         ):
-            covers = await _load_prior_transcript(
+            covers, _ = await _load_prior_transcript(
                 user_id="user-1",
                 session_id="session-1",
                 session_messages=_make_session_messages("user", "assistant", "user"),
@@ -527,7 +534,7 @@ class TestTranscriptLifecycle:
             ),
         ):
             # --- 1. Restore & load prior session ---
-            covers = await _load_prior_transcript(
+            covers, _ = await _load_prior_transcript(
                 user_id="user-1",
                 session_id="session-1",
                 session_messages=_make_session_messages("user", "assistant", "user"),
@@ -593,7 +600,7 @@ class TestTranscriptLifecycle:
                 new=upload_mock,
             ),
         ):
-            covers = await _load_prior_transcript(
+            covers, _ = await _load_prior_transcript(
                 user_id="user-1",
                 session_id="session-1",
                 session_messages=_make_session_messages(
@@ -638,7 +645,7 @@ class TestTranscriptLifecycle:
                 new=upload_mock,
             ),
         ):
-            covers = await _load_prior_transcript(
+            covers, dl = await _load_prior_transcript(
                 user_id="user-1",
                 session_id="session-1",
                 session_messages=_make_session_messages("user"),
@@ -648,6 +655,7 @@ class TestTranscriptLifecycle:
             # skip upload. This protects against overwriting a future
             # more-complete session with a single-turn snapshot.
             assert covers is False
+            assert dl is None
             assert (
                 should_upload_transcript(
                     user_id="user-1", transcript_covers_prefix=covers

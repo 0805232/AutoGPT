@@ -66,8 +66,10 @@ from backend.copilot.tracking import track_user_message
 from backend.copilot.transcript import (
     STOP_REASON_END_TURN,
     STOP_REASON_TOOL_USE,
+    TranscriptDownload,
     detect_gap,
     download_transcript,
+    extract_context_messages,
     strip_for_upload,
     upload_transcript,
     validate_transcript,
@@ -759,13 +761,18 @@ async def _load_prior_transcript(
     session_id: str,
     session_messages: list[ChatMessage],
     transcript_builder: TranscriptBuilder,
-) -> bool:
+) -> tuple[bool, "TranscriptDownload | None"]:
     """Download and load the prior CLI session into ``transcript_builder``.
 
-    Returns ``True`` when the loaded session fully covers the session
-    prefix; ``False`` otherwise (missing, invalid, or download error).
-    Callers should suppress uploads when this returns ``False`` to avoid
-    overwriting a more complete version in storage.
+    Returns a tuple of (covers_prefix, transcript_download):
+    - ``covers_prefix`` is ``True`` when the loaded session fully covers the
+      session prefix; ``False`` otherwise (missing, invalid, or download error).
+      Callers should suppress uploads when this is ``False`` to avoid overwriting
+      a more complete version in storage.
+    - ``transcript_download`` is a ``TranscriptDownload`` with str content
+      (pre-decoded and stripped) when available, or ``None`` when no valid
+      transcript could be loaded.  Callers pass this to
+      ``extract_context_messages`` to build the LLM context.
     """
     try:
         restore = await download_transcript(
@@ -773,27 +780,32 @@ async def _load_prior_transcript(
         )
     except Exception as e:
         logger.warning("[Baseline] Session restore failed: %s", e)
-        return False
+        return False, None
 
     if restore is None:
         logger.debug("[Baseline] No CLI session available")
-        return False
+        return False, None
 
+    content_bytes = restore.content
     try:
-        raw_str = restore.content.decode("utf-8")
+        raw_str = (
+            content_bytes.decode("utf-8")
+            if isinstance(content_bytes, bytes)
+            else content_bytes
+        )
     except UnicodeDecodeError:
         logger.warning("[Baseline] CLI session content is not valid UTF-8")
-        return False
+        return False, None
 
     stripped = strip_for_upload(raw_str)
     if not validate_transcript(stripped):
         logger.warning("[Baseline] CLI session content invalid after strip")
-        return False
+        return False, None
 
     transcript_builder.load_previous(stripped, log_prefix="[Baseline]")
     logger.info(
         "[Baseline] Loaded CLI session: %dB, msg_count=%d",
-        len(restore.content),
+        len(content_bytes) if isinstance(content_bytes, bytes) else len(raw_str),
         restore.message_count,
     )
 
@@ -806,7 +818,16 @@ async def _load_prior_transcript(
             len(gap),
         )
 
-    return True
+    # Return a str-content version so extract_context_messages receives a
+    # pre-decoded, stripped transcript (avoids redundant decode + strip).
+    # TranscriptDownload.content is typed as bytes | str; we pass str here
+    # to avoid a redundant encode + decode round-trip.
+    str_restore = TranscriptDownload(
+        content=stripped,
+        message_count=restore.message_count,
+        mode=restore.mode,
+    )
+    return True, str_restore
 
 
 async def _upload_final_transcript(
@@ -947,9 +968,10 @@ async def stream_chat_completion_baseline(
 
     # Run download + prompt build concurrently — both are independent I/O
     # on the request critical path.
+    transcript_download: TranscriptDownload | None = None
     if user_id and len(session.messages) > 1:
         (
-            transcript_covers_prefix,
+            (transcript_covers_prefix, transcript_download),
             (base_system_prompt, understanding),
         ) = await asyncio.gather(
             _load_prior_transcript(
@@ -995,9 +1017,14 @@ async def stream_chat_completion_baseline(
 
         warm_ctx = await fetch_warm_context(user_id, message or "")
 
-    # Compress context if approaching the model's token limit
+    # Context path: transcript content (compacted, isCompactSummary preserved) +
+    # gap (DB messages after watermark) + current user turn.
+    # This avoids re-reading the full session history from DB on every turn.
+    # See extract_context_messages() in transcript.py for the shared primitive.
+    prior_context = extract_context_messages(transcript_download, session.messages)
     messages_for_context = await _compress_session_messages(
-        session.messages, model=active_model
+        prior_context + [session.messages[-1]],
+        model=active_model,
     )
 
     # Build OpenAI message list from session history.
