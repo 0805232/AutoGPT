@@ -695,11 +695,7 @@ async def append_and_save_message(session_id: str, message: ChatMessage) -> Chat
             logger.warning(f"Cache write failed for session {session_id}: {e}")
             # Invalidate the stale entry so future reads fall back to DB,
             # preventing a retry from bypassing the idempotency check above.
-            try:
-                _redis = await get_redis_async()
-                await _redis.delete(_get_session_cache_key(session_id))
-            except Exception:
-                pass
+            await invalidate_session_cache(session_id)
 
         return session
 
