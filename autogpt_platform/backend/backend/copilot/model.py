@@ -667,9 +667,11 @@ async def append_and_save_message(session_id: str, message: ChatMessage) -> Chat
         # Distributed lock — protects the read-check-write across replicas.
         # A retry routed to a different pod acquires this lock, waits for the
         # first pod to finish writing, then hits the idempotency check below.
-        redis_lock_key = f"copilot:msg_append:{session_id}"
-        redis = await get_redis_async()
-        acquired = await redis.set(redis_lock_key, "1", nx=True, ex=10)
+        # TTL (10s) is a crash-safety net; the lock is always released explicitly
+        # as soon as the write completes (same pattern as rate_limit.py).
+        _redis = await get_redis_async()
+        _lock_key = f"copilot:msg_append:{session_id}"
+        acquired = bool(await _redis.set(_lock_key, "1", nx=True, ex=10))
         if not acquired:
             # Another pod is mid-write for this session.  Wait briefly so it
             # finishes, then let the idempotency check below short-circuit.
@@ -719,7 +721,7 @@ async def append_and_save_message(session_id: str, message: ChatMessage) -> Chat
             return session
         finally:
             if acquired:
-                await redis.delete(redis_lock_key)
+                await _redis.delete(_lock_key)
 
 
 async def create_chat_session(user_id: str, *, dry_run: bool) -> ChatSession:
