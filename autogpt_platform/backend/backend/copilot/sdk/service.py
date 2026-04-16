@@ -943,7 +943,10 @@ def _read_cli_session_from_disk(
     except UnicodeDecodeError:
         logger.warning("%s CLI session is not valid UTF-8, uploading raw", log_prefix)
         return raw_bytes
-    except Exception as e:
+    except (OSError, ValueError) as e:
+        # OSError: encode/decode I/O failure; ValueError: malformed JSONL in strip.
+        # Other unexpected exceptions are not silently swallowed here so they propagate
+        # to the outer OSError handler and are logged with exc_info.
         logger.warning(
             "%s Failed to strip CLI session, uploading raw: %s", log_prefix, e
         )
@@ -998,10 +1001,12 @@ def _process_cli_restore(
 
     stripped = strip_for_upload(raw_str)
     is_valid = validate_transcript(stripped)
+    # Use len(raw_str) rather than len(cli_restore.content) so the unit is always
+    # characters (raw_str is always str at this point regardless of input type).
     logger.info(
         "%s Restored CLI session: %dB raw, %d lines stripped, msg_count=%d, valid=%s",
         log_prefix,
-        len(cli_restore.content),
+        len(raw_str),
         len(stripped.strip().split("\n")) if stripped.strip() else 0,
         cli_restore.message_count,
         is_valid,
@@ -3673,6 +3678,13 @@ async def stream_chat_completion_sdk(
                         else transcript_msg_count
                     )
                     if _final_use_resume and _final_tmsg_count > 0:
+                        # +2 = current user turn + current assistant response.
+                        # For tool-use turns with multiple assistant+tool pairs this
+                        # under-counts (e.g. +4), but the resulting underestimate is
+                        # safe: next turn's detect_gap returns the uncovered entries
+                        # as a small gap that is filled from DB.  Over-estimating
+                        # (using len(session.messages)) would suppress gap detection
+                        # when a prior upload was missed — the inflated-watermark bug.
                         _jsonl_covered = _final_tmsg_count + 2
                     else:
                         _jsonl_covered = len(session.messages)

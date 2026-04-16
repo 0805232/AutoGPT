@@ -826,6 +826,9 @@ def detect_gap(
         return []
     # Sanity: position wm-1 should be an assistant turn; misaligned watermark
     # means the DB messages shifted (e.g. deletion) — skip gap to avoid wrong context.
+    # In normal operation ``message_count`` is always written after a complete
+    # user→assistant exchange (never mid-turn), so the last covered position is
+    # always assistant.  This guard fires only on data corruption or message deletion.
     if session_messages[wm - 1].role != "assistant":
         return []
     return list(session_messages[wm : total - 1])

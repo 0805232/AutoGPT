@@ -724,6 +724,12 @@ def _append_gap_to_builder(
 
     Converts ChatMessage (OpenAI format) to TranscriptBuilder entries
     (Claude CLI JSONL format) so the uploaded transcript covers all turns.
+
+    Pre-condition: ``gap`` always starts at a user or assistant boundary
+    (never mid-turn at a ``tool`` role), because ``detect_gap`` enforces
+    ``session_messages[wm-1].role == 'assistant'`` before returning a non-empty
+    gap.  Any ``tool`` role messages within the gap always follow an assistant
+    entry that already exists in the builder or in the gap itself.
     """
     for msg in gap:
         if msg.role == "user":
