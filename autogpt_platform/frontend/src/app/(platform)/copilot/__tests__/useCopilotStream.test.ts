@@ -84,6 +84,7 @@ vi.mock("@ai-sdk/react", () => ({
 }));
 
 // Import after mocks
+import { useCopilotStreamStore } from "../copilotStreamStore";
 import { useCopilotStream } from "../useCopilotStream";
 
 type Args = Parameters<typeof useCopilotStream>[0];
@@ -113,6 +114,9 @@ beforeEach(() => {
   mockHasActiveBackendStream.mockReturnValue(false);
   mockDisconnectSessionStream.mockClear();
   mockInvalidateQueries.mockClear();
+  // Zustand stores are module singletons — wipe per-session coord state so
+  // tests don't leak into each other.
+  useCopilotStreamStore.getState().resetAll();
 });
 
 afterEach(() => {
@@ -257,5 +261,61 @@ describe("useCopilotStream — forced reconnect timeout (SECRT-2241)", () => {
       ([call]) => (call as { title?: string }).title === "Connection timed out",
     );
     expect(timeoutToast).toBeUndefined();
+  });
+});
+
+describe("useCopilotStream — resume snapshot guard", () => {
+  it("restores the stripped trailing assistant if submitted→ready without streaming", async () => {
+    // Arrange: an assistant bubble already hydrated into the chat.
+    const trailingAssistant: UIMessage = {
+      id: "hydrated-assistant",
+      role: "assistant",
+      parts: [{ type: "text", text: "hydrated content", state: "done" }],
+    };
+    mockMessages = [trailingAssistant];
+
+    const { rerender } = renderHook((args: Args) => useCopilotStream(args), {
+      initialProps: makeArgs({
+        hasActiveStream: true,
+        hydratedMessages: [trailingAssistant],
+      }),
+    });
+
+    // Resume fires and strips the trailing assistant (the SDK will build
+    // fresh when the backend replays from "0-0"). The SDK mock only records
+    // calls — it doesn't execute the updater — so the snapshot must come
+    // from the status transition, not from setMessages return values.
+    expect(mockResumeStream).toHaveBeenCalledTimes(1);
+
+    // Simulate the resume kicking the SDK into "submitted" with no chunks,
+    // then dropping back to "ready" (e.g. 204 Not Found because the stream
+    // already finished). The snapshot must be restored via setMessages.
+    mockSetMessages.mockClear();
+    mockStatus = "submitted";
+    rerender(
+      makeArgs({
+        hasActiveStream: true,
+        hydratedMessages: [trailingAssistant],
+      }),
+    );
+    mockStatus = "ready";
+    rerender(
+      makeArgs({
+        hasActiveStream: true,
+        hydratedMessages: [trailingAssistant],
+      }),
+    );
+
+    // One of the setMessages calls should be the restoration (append snapshot).
+    const restorer = mockSetMessages.mock.calls.find(([arg]) => {
+      if (typeof arg !== "function") return false;
+      const next = (arg as (prev: UIMessage[]) => UIMessage[])([]);
+      return (
+        Array.isArray(next) &&
+        next.length === 1 &&
+        next[0].id === "hydrated-assistant"
+      );
+    });
+    expect(restorer).toBeDefined();
   });
 });
