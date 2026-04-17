@@ -15,19 +15,19 @@ const TIERS: TierInfo[] = [
     key: "FREE",
     label: "Free",
     multiplier: "1x",
-    description: "Base rate limits",
+    description: "Base rate limits · 250 MB file storage",
   },
   {
     key: "PRO",
     label: "Pro",
     multiplier: "5x",
-    description: "5x more AutoPilot capacity",
+    description: "5x more AutoPilot capacity · 1 GB file storage",
   },
   {
     key: "BUSINESS",
     label: "Business",
     multiplier: "20x",
-    description: "20x more AutoPilot capacity",
+    description: "20x more AutoPilot capacity · 5 GB file storage",
   },
 ];
 
