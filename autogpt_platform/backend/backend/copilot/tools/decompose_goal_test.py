@@ -16,7 +16,7 @@ from .decompose_goal import (
     DecomposeGoalTool,
     _no_user_action_since,
     cancel_auto_approve,
-    has_pending_decomposition,
+    needs_build_plan_approval,
 )
 from .models import ErrorResponse, TaskDecompositionResponse
 
@@ -347,7 +347,7 @@ def test_predicate_handles_messages_with_none_sequence():
 
 
 # ---------------------------------------------------------------------------
-# has_pending_decomposition — build-tool approval gate
+# needs_build_plan_approval — build-tool approval gate
 # ---------------------------------------------------------------------------
 
 
@@ -359,67 +359,92 @@ def _decompose_tool_call() -> dict:
     }
 
 
-def test_pending_decomposition_true_when_no_user_after_call():
-    """LLM called decompose_goal but user hasn't responded yet."""
+def test_needs_approval_blocks_when_no_decompose_in_session():
+    """LLM tries to build without calling decompose_goal at all."""
     session = make_session(_USER_ID)
     session.messages.append(ChatMessage(role="user", content="Build me an agent"))
-    session.messages.append(
-        ChatMessage(role="assistant", content="", tool_calls=[_decompose_tool_call()])
-    )
-    session.messages.append(ChatMessage(role="tool", content="{...plan...}"))
-    assert has_pending_decomposition(session) is True
+    assert needs_build_plan_approval(session) is True
 
 
-def test_pending_decomposition_false_after_user_approves():
-    """User approved — downstream tools should be unblocked."""
+def test_needs_approval_blocks_when_last_user_is_not_approval():
+    """Even with a decompose_goal earlier, a fresh non-approval user message
+    starts a new build flow that requires its own decomposition."""
     session = make_session(_USER_ID)
-    session.messages.append(ChatMessage(role="user", content="Build me an agent"))
-    session.messages.append(
-        ChatMessage(role="assistant", content="", tool_calls=[_decompose_tool_call()])
-    )
-    session.messages.append(ChatMessage(role="tool", content="{...plan...}"))
-    session.messages.append(
-        ChatMessage(role="user", content="Approved. Please build the agent.")
-    )
-    assert has_pending_decomposition(session) is False
-
-
-def test_pending_decomposition_false_when_no_decompose_call():
-    """Sessions without decompose_goal are never blocked."""
-    session = make_session(_USER_ID)
-    session.messages.append(ChatMessage(role="user", content="Change the prompt"))
-    session.messages.append(ChatMessage(role="assistant", content="Sure, will do."))
-    assert has_pending_decomposition(session) is False
-
-
-def test_pending_decomposition_ignores_assistant_text_without_tool_calls():
-    """Assistant's text after decompose_goal doesn't count as user action."""
-    session = make_session(_USER_ID)
-    session.messages.append(ChatMessage(role="user", content="Build me an agent"))
-    session.messages.append(
-        ChatMessage(role="assistant", content="", tool_calls=[_decompose_tool_call()])
-    )
-    session.messages.append(ChatMessage(role="tool", content="{...plan...}"))
-    session.messages.append(ChatMessage(role="assistant", content="Plan is ready."))
-    assert has_pending_decomposition(session) is True
-
-
-def test_pending_decomposition_scans_most_recent_call():
-    """Only the most recent decompose_goal matters; older ones are irrelevant."""
-    session = make_session(_USER_ID)
-    # Old cycle: decomposed, approved, built.
     session.messages.append(ChatMessage(role="user", content="Build v1"))
     session.messages.append(
         ChatMessage(role="assistant", content="", tool_calls=[_decompose_tool_call()])
     )
     session.messages.append(ChatMessage(role="tool", content="{plan v1}"))
     session.messages.append(ChatMessage(role="user", content="Approved"))
-    # New cycle: decomposed, still awaiting approval.
+    session.messages.append(ChatMessage(role="assistant", content="agent built."))
+    # User asks for a second build — LLM must call decompose_goal again.
+    session.messages.append(ChatMessage(role="user", content="Now build v2"))
+    assert needs_build_plan_approval(session) is True
+
+
+def test_needs_approval_allows_when_user_approved_after_decompose():
+    """User said "Approved" after a decompose_goal → build may proceed."""
+    session = make_session(_USER_ID)
+    session.messages.append(ChatMessage(role="user", content="Build me an agent"))
     session.messages.append(
         ChatMessage(role="assistant", content="", tool_calls=[_decompose_tool_call()])
     )
-    session.messages.append(ChatMessage(role="tool", content="{plan v2}"))
-    assert has_pending_decomposition(session) is True
+    session.messages.append(ChatMessage(role="tool", content="{plan}"))
+    session.messages.append(
+        ChatMessage(role="user", content="Approved. Please build the agent.")
+    )
+    assert needs_build_plan_approval(session) is False
+
+
+def test_needs_approval_allows_modified_approval():
+    """Approved with modifications also counts as approval."""
+    session = make_session(_USER_ID)
+    session.messages.append(ChatMessage(role="user", content="Build me an agent"))
+    session.messages.append(
+        ChatMessage(role="assistant", content="", tool_calls=[_decompose_tool_call()])
+    )
+    session.messages.append(ChatMessage(role="tool", content="{plan}"))
+    session.messages.append(
+        ChatMessage(
+            role="user",
+            content="Approved with modifications. Please build the agent following these steps: ...",
+        )
+    )
+    assert needs_build_plan_approval(session) is False
+
+
+def test_needs_approval_blocks_same_turn_decompose_and_build():
+    """LLM calls decompose_goal then immediately tries create_agent in the
+    same turn — the last user message is still the original build request,
+    not an approval."""
+    session = make_session(_USER_ID)
+    session.messages.append(ChatMessage(role="user", content="Build me an agent"))
+    session.messages.append(
+        ChatMessage(role="assistant", content="", tool_calls=[_decompose_tool_call()])
+    )
+    session.messages.append(ChatMessage(role="tool", content="{plan}"))
+    # No user message yet — still mid-countdown.
+    assert needs_build_plan_approval(session) is True
+
+
+def test_needs_approval_blocks_approval_without_prior_decompose():
+    """User spontaneously says "Approved" but no decompose_goal was ever
+    called — the LLM did not show a plan, so the gate stays closed."""
+    session = make_session(_USER_ID)
+    session.messages.append(ChatMessage(role="user", content="Approved"))
+    assert needs_build_plan_approval(session) is True
+
+
+def test_needs_approval_case_insensitive():
+    """Approval detection is case-insensitive."""
+    session = make_session(_USER_ID)
+    session.messages.append(ChatMessage(role="user", content="Build me an agent"))
+    session.messages.append(
+        ChatMessage(role="assistant", content="", tool_calls=[_decompose_tool_call()])
+    )
+    session.messages.append(ChatMessage(role="tool", content="{plan}"))
+    session.messages.append(ChatMessage(role="user", content="APPROVED, go."))
+    assert needs_build_plan_approval(session) is False
 
 
 # ---------------------------------------------------------------------------

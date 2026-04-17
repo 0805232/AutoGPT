@@ -8,7 +8,7 @@ from backend.copilot.model import ChatSession
 
 from .agent_generator.pipeline import fetch_library_agents, fix_validate_and_save
 from .base import BaseTool
-from .decompose_goal import has_pending_decomposition
+from .decompose_goal import needs_build_plan_approval
 from .models import ErrorResponse, ToolResponseBase
 
 logger = logging.getLogger(__name__)
@@ -71,22 +71,22 @@ class CreateAgentTool(BaseTool):
     ) -> ToolResponseBase:
         session_id = session.session_id if session else None
 
-        # Enforce the decompose_goal approval gate. The LLM is instructed via
-        # ``agent_generation_guide.md`` to STOP after decompose_goal until the
-        # user approves, but natural-language instructions alone are not
-        # reliable — without this gate, the LLM has been observed calling
-        # ``decompose_goal`` and ``create_agent`` in the same turn, building
-        # the agent while the user is still mid-countdown.
-        if session and has_pending_decomposition(session):
+        # Enforce the decompose_goal approval gate at the code level.
+        # Prompt-only "STOP" is unreliable: the LLM has been observed
+        # (a) calling decompose_goal + create_agent in the same turn and
+        # (b) skipping decompose_goal entirely on follow-up build requests.
+        # Require that the most recent user message is an approval AND a
+        # decompose_goal call exists before it in the session.
+        if session and needs_build_plan_approval(session):
             return ErrorResponse(
                 message=(
-                    "A build plan is awaiting user approval. Do not call "
-                    "create_agent until the user responds with Approved "
-                    "(or Approved with modifications). End your turn now — "
-                    "the platform will resume the conversation once the user "
-                    "responds."
+                    "You must call decompose_goal first and wait for user "
+                    "approval before calling create_agent. Call decompose_goal "
+                    "now with the build steps, then end your turn — the "
+                    "platform will resume the conversation after the user "
+                    "responds with Approved (or Approved with modifications)."
                 ),
-                error="decomposition_pending_approval",
+                error="build_plan_approval_required",
                 session_id=session_id,
             )
 
