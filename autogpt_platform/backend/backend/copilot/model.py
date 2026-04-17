@@ -726,9 +726,22 @@ async def append_message_if(
     the append are one atomic operation — no race with concurrent appends.
 
     Returns the updated session on append, or ``None`` if the predicate
-    rejected, the session no longer exists, or the append failed.
+    rejected, the session no longer exists, the lock could not be acquired,
+    or the append failed.
     """
-    async with _get_session_lock(session_id) as _lock_acquired:
+    async with _get_session_lock(session_id) as lock_acquired:
+        # Without the lock, concurrent callers could both read the same DB
+        # state, both pass the predicate, and both append — producing
+        # duplicate messages. Since ``append_message_if`` only powers
+        # non-critical fire-and-forget flows (e.g. decompose_goal
+        # auto-approve), skipping on lock failure is safer than risking a
+        # duplicate. The user can still trigger the action manually.
+        if not lock_acquired:
+            logger.warning(
+                "append_message_if: skipping for session %s (lock not acquired)",
+                session_id,
+            )
+            return None
         # Read from DB directly — the Redis cache can be stale because the
         # executor's upsert_chat_session overwrites it with in-memory copies
         # during streaming, which may not include messages appended by the
