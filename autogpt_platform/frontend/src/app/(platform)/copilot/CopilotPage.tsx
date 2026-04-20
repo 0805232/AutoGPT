@@ -38,6 +38,8 @@ export function CopilotPage() {
     stop,
     isReconnecting,
     isSyncing,
+    isRetrievingStream,
+    streamRetrievalFailed,
     createSession,
     onSend,
     onEnqueue,
@@ -101,6 +103,8 @@ export function CopilotPage() {
               isCreatingSession={isCreatingSession}
               isReconnecting={isReconnecting}
               isSyncing={isSyncing}
+              isRetrievingStream={isRetrievingStream}
+              streamRetrievalFailed={streamRetrievalFailed}
               onCreateSession={createSession}
               onSend={onSend}
               onStop={stop}

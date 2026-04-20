@@ -33,6 +33,7 @@ import { CollapsedToolGroup } from "./components/CollapsedToolGroup";
 import { MessageAttachments } from "./components/MessageAttachments";
 import { MessagePartRenderer } from "./components/MessagePartRenderer";
 import { StepsCollapse } from "./components/StepsCollapse";
+import { RetrievalIndicator } from "./components/RetrievalIndicator";
 import { ThinkingIndicator } from "./components/ThinkingIndicator";
 
 interface Props {
@@ -48,6 +49,12 @@ interface Props {
   historicalDurations?: Map<string, number>;
   /** Pending queued messages waiting to be injected, shown at the end of chat. */
   queuedMessages?: string[];
+  /** True while the replay of an active backend stream is being fetched —
+   *  drives the dedicated "Retrieving your conversation…" placeholder. */
+  isRetrievingStream?: boolean;
+  /** True once the retrieval has exceeded its hard timeout; the chat shows
+   *  an inline "Failed to retrieve latest conversation" banner. */
+  streamRetrievalFailed?: boolean;
 }
 
 function renderSegments(
@@ -258,6 +265,8 @@ export function ChatMessagesContainer({
   onRetry,
   historicalDurations,
   queuedMessages,
+  isRetrievingStream,
+  streamRetrievalFailed,
 }: Props) {
   // Hide the container for one frame when messages first load so
   // StickToBottom can scroll to the bottom before the user sees it.
@@ -314,9 +323,19 @@ export function ChatMessagesContainer({
 
   const showThinking =
     status === "submitted" || (status === "streaming" && !hasInflight);
-
   const isActivelyStreaming = status === "streaming" || status === "submitted";
   const { elapsedSeconds } = useElapsedTimer(isActivelyStreaming);
+  // While the client is fetching the replay for an active backend stream,
+  // and until the hard retrieval timeout fires, swap the generic
+  // "Thinking…" bubble for a dedicated placeholder that makes the wait
+  // legible (and surfaces an inline reload prompt on timeout).
+  const showRetrieval = !!(isRetrievingStream || streamRetrievalFailed);
+  const indicator = showRetrieval ? (
+    <RetrievalIndicator failed={streamRetrievalFailed} />
+  ) : (
+    <ThinkingIndicator active={showThinking} elapsedSeconds={elapsedSeconds} />
+  );
+  const showIndicator = showRetrieval || showThinking;
 
   // Freeze elapsed time when streaming ends so TurnStatsBar shows the final value.
   // Reset when a new streaming turn begins.
@@ -456,12 +475,7 @@ export function ChatMessagesContainer({
                     durationMs={historicalDurations?.get(message.id)}
                   />
                 )}
-                {isLastAssistant && showThinking && (
-                  <ThinkingIndicator
-                    active={showThinking}
-                    elapsedSeconds={elapsedSeconds}
-                  />
-                )}
+                {isLastAssistant && showIndicator && indicator}
               </MessageContent>
               {message.role === "user" && textParts.length > 0 && (
                 <MessageActions className="mt-1 justify-end opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
@@ -483,13 +497,10 @@ export function ChatMessagesContainer({
             </Message>
           );
         })}
-        {showThinking && lastMessage?.role !== "assistant" && (
+        {showIndicator && lastMessage?.role !== "assistant" && (
           <Message from="assistant">
             <MessageContent className="text-[1rem] leading-relaxed">
-              <ThinkingIndicator
-                active={showThinking}
-                elapsedSeconds={elapsedSeconds}
-              />
+              {indicator}
             </MessageContent>
           </Message>
         )}

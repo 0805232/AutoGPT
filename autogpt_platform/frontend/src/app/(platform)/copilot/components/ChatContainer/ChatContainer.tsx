@@ -23,6 +23,12 @@ export interface ChatContainerProps {
   isReconnecting?: boolean;
   /** True while re-syncing session state after device wake. */
   isSyncing?: boolean;
+  /** True while fetching a replay of an active backend stream (shows the
+   *  "Retrieving your conversation…" placeholder instead of "Thinking…"). */
+  isRetrievingStream?: boolean;
+  /** True once the retrieval has exceeded its hard timeout and the user
+   *  should be told to reload. */
+  streamRetrievalFailed?: boolean;
   onCreateSession: () => void | Promise<string>;
   onSend: (message: string, files?: File[]) => void | Promise<void>;
   onStop: () => void;
@@ -51,6 +57,8 @@ export const ChatContainer = ({
   isCreatingSession,
   isReconnecting,
   isSyncing,
+  isRetrievingStream,
+  streamRetrievalFailed,
   onCreateSession,
   onSend,
   onStop,
@@ -118,6 +126,8 @@ export const ChatContainer = ({
                 onRetry={handleRetry}
                 historicalDurations={historicalDurations}
                 queuedMessages={queuedMessages}
+                isRetrievingStream={isRetrievingStream}
+                streamRetrievalFailed={streamRetrievalFailed}
               />
               <motion.div
                 initial={{ opacity: 0 }}

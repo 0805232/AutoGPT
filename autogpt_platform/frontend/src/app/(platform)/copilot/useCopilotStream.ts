@@ -42,6 +42,15 @@ const RECONNECT_MAX_DURATION_MS = 30_000;
 const FINISH_REFETCH_SETTLE_MS = 500;
 
 /**
+ * How long to wait for the first visible chunk after kicking off a
+ * session-resume before declaring retrieval failed and surfacing an
+ * inline reload prompt. Chosen to exceed typical replay latency but
+ * stay short enough that a user noticing "Retrieving your
+ * conversation…" doesn't feel indefinitely hung.
+ */
+const STREAM_RETRIEVAL_TIMEOUT_MS = 12_000;
+
+/**
  * Parses a backend-encoded error code from an `errorText` payload.
  *
  * The AI-SDK SSE protocol enforces `z.strictObject({type, errorText})`
@@ -198,12 +207,18 @@ export function useCopilotStream({
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const reconnectTimeoutTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const resumeGraceTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const retrievalTimeoutTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const lastHiddenAtRef = useRef(Date.now());
   const sessionEpochRef = useRef(0);
   // Reactive flag that drives the isReconnecting UI state.
   const [isReconnectScheduled, setIsReconnectScheduled] = useState(false);
   const [reconnectExhausted, setReconnectExhausted] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  // True from when resume fires (switching to a chat with an active backend
+  // stream) until the first visible chunk lands — drives the dedicated
+  // "Retrieving your conversation…" UI instead of the generic "Thinking…".
+  const [isRetrievingStream, setIsRetrievingStream] = useState(false);
+  const [streamRetrievalFailed, setStreamRetrievalFailed] = useState(false);
   // Synchronous flag read inside SDK callbacks — kept as a ref so callbacks
   // don't have to trigger re-renders to observe changes.
   //
@@ -316,10 +331,27 @@ export function useCopilotStream({
       .getState()
       .updateCoord(sid, { stripSnapshot: snapshot });
 
+    // Flip the UI into a dedicated "Retrieving your conversation…"
+    // state — it's distinct from "Thinking…" because the model isn't
+    // actually deliberating; we're waiting on the replay to catch us up.
+    setIsRetrievingStream(true);
+    setStreamRetrievalFailed(false);
+
+    const capturedEpoch = sessionEpochRef.current;
+
+    // Arm a hard failure timer: if no visible chunk lands within the
+    // retrieval window the user sees an inline "Failed to retrieve"
+    // banner with a reload prompt, instead of staring at a spinner.
+    clearTimeout(retrievalTimeoutTimerRef.current);
+    retrievalTimeoutTimerRef.current = setTimeout(() => {
+      if (sessionEpochRef.current !== capturedEpoch) return;
+      setIsRetrievingStream(false);
+      setStreamRetrievalFailed(true);
+    }, STREAM_RETRIEVAL_TIMEOUT_MS);
+
     // Start a grace timer: if no chunks arrive in time, restore the snapshot.
     // The status-transition effect clears this timer if streaming begins.
     clearTimeout(resumeGraceTimerRef.current);
-    const capturedEpoch = sessionEpochRef.current;
     resumeGraceTimerRef.current = setTimeout(() => {
       if (sessionEpochRef.current !== capturedEpoch) return;
       restoreSnapshotIfPresent(sid);
@@ -699,10 +731,14 @@ export function useCopilotStream({
     reconnectTimeoutTimerRef.current = undefined;
     clearTimeout(resumeGraceTimerRef.current);
     resumeGraceTimerRef.current = undefined;
+    clearTimeout(retrievalTimeoutTimerRef.current);
+    retrievalTimeoutTimerRef.current = undefined;
     setIsReconnectScheduled(false);
     setRateLimitMessage(null);
     setReconnectExhausted(false);
     setIsSyncing(false);
+    setIsRetrievingStream(false);
+    setStreamRetrievalFailed(false);
     return () => {
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = undefined;
@@ -710,6 +746,8 @@ export function useCopilotStream({
       reconnectTimeoutTimerRef.current = undefined;
       clearTimeout(resumeGraceTimerRef.current);
       resumeGraceTimerRef.current = undefined;
+      clearTimeout(retrievalTimeoutTimerRef.current);
+      retrievalTimeoutTimerRef.current = undefined;
     };
   }, [sessionId]);
 
@@ -781,18 +819,27 @@ export function useCopilotStream({
   // empty reasoning-start / step-start chunks for minutes before any
   // rendered content arrives — during which the Thinking-bubble would
   // otherwise stay stuck and the grace timer restore would never fire.
+  //
+  // Also clears the `isRetrievingStream` flag: once the user can see
+  // actual content the "Retrieving your conversation…" UI has served
+  // its purpose and should yield to the normal streaming indicators.
   useEffect(() => {
     if (!sessionId) return;
+    if (!hasVisibleAssistantContent(rawMessages)) return;
     const { stripSnapshot } = useCopilotStreamStore
       .getState()
       .getCoord(sessionId);
-    if (!stripSnapshot) return;
-    if (!hasVisibleAssistantContent(rawMessages)) return;
-    clearTimeout(resumeGraceTimerRef.current);
-    resumeGraceTimerRef.current = undefined;
-    useCopilotStreamStore
-      .getState()
-      .updateCoord(sessionId, { stripSnapshot: null });
+    if (stripSnapshot) {
+      clearTimeout(resumeGraceTimerRef.current);
+      resumeGraceTimerRef.current = undefined;
+      useCopilotStreamStore
+        .getState()
+        .updateCoord(sessionId, { stripSnapshot: null });
+    }
+    clearTimeout(retrievalTimeoutTimerRef.current);
+    retrievalTimeoutTimerRef.current = undefined;
+    setIsRetrievingStream(false);
+    setStreamRetrievalFailed(false);
   }, [rawMessages, sessionId]);
 
   // Resume an active stream AFTER hydration completes.
@@ -850,10 +897,17 @@ export function useCopilotStream({
 
   // Reset the user-stop flag once the backend confirms the stream is no
   // longer active — this prevents the flag from staying stale forever.
+  // Also tear down the retrieval UI once there's no backend stream left
+  // to retrieve (task finished while we were waiting).
   useEffect(() => {
-    if (!hasActiveStream && isUserStoppingRef.current !== null) {
+    if (hasActiveStream) return;
+    if (isUserStoppingRef.current !== null) {
       isUserStoppingRef.current = null;
     }
+    clearTimeout(retrievalTimeoutTimerRef.current);
+    retrievalTimeoutTimerRef.current = undefined;
+    setIsRetrievingStream(false);
+    setStreamRetrievalFailed(false);
   }, [hasActiveStream]);
 
   // True while reconnecting or backend has active stream but we haven't connected yet.
@@ -876,6 +930,8 @@ export function useCopilotStream({
       isReconnecting || isUserStoppingRef.current !== null ? undefined : error,
     isReconnecting,
     isSyncing,
+    isRetrievingStream,
+    streamRetrievalFailed,
     isUserStoppingRef,
     rateLimitMessage,
     dismissRateLimit,

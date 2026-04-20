@@ -264,3 +264,55 @@ describe("ChatMessagesContainer", () => {
     ).toBeNull();
   });
 });
+
+// ── retrieval placeholder ─────────────────────────────────────────────────
+
+describe("ChatMessagesContainer — retrieval placeholder", () => {
+  beforeEach(() => {
+    mockScrollEl.scrollHeight = 100;
+    mockScrollEl.scrollTop = 0;
+    mockScrollEl.clientHeight = 500;
+    MockIntersectionObserver.lastCallback = null;
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows 'Retrieving your conversation…' while fetching a replay", () => {
+    render(
+      <ChatMessagesContainer
+        {...baseProps}
+        status="submitted"
+        isRetrievingStream
+      />,
+    );
+    expect(screen.getByText(/Retrieving your conversation/i)).toBeDefined();
+  });
+
+  it("shows the reload-prompt error once the retrieval timeout fires", () => {
+    render(
+      <ChatMessagesContainer
+        {...baseProps}
+        status="submitted"
+        streamRetrievalFailed
+      />,
+    );
+    expect(
+      screen.getByText(/Failed to retrieve latest conversation/i),
+    ).toBeDefined();
+  });
+
+  it("falls back to the Thinking indicator when retrieval flags are off", () => {
+    render(
+      <ChatMessagesContainer {...baseProps} status="submitted" />,
+    );
+    // Retrieval-specific copy must NOT leak into a normal thinking state.
+    expect(screen.queryByText(/Retrieving your conversation/i)).toBeNull();
+    expect(
+      screen.queryByText(/Failed to retrieve latest conversation/i),
+    ).toBeNull();
+  });
+});
