@@ -16,6 +16,7 @@ import {
   deduplicateMessages,
   extractSendMessageText,
   hasActiveBackendStream,
+  hasVisibleAssistantContent,
   resolveInProgressTools,
   getSendSuppressionReason,
   disconnectSessionStream,
@@ -246,12 +247,18 @@ export function useCopilotStream({
     if (!stripSnapshot) return;
     useCopilotStreamStore.getState().updateCoord(sid, { stripSnapshot: null });
     setMessages((prev) => {
-      // Don't restore if the stream did produce an assistant message after
-      // all — the trailing assistant now belongs to the replay.
-      if (prev.length > 0 && prev[prev.length - 1].role === "assistant") {
-        return prev;
+      const last = prev[prev.length - 1];
+      if (last?.role !== "assistant") {
+        return [...prev, stripSnapshot];
       }
-      return [...prev, stripSnapshot];
+      // Trailing assistant is the replay. If it has any rendered content we
+      // leave it alone (the replay is working). If it's still empty after
+      // the grace window — e.g. status went to "streaming" but only empty
+      // reasoning-start / step-start parts arrived — swap it for the
+      // snapshot so the user sees the hydrated content instead of a stuck
+      // "Thinking..." bubble.
+      if (hasVisibleAssistantContent(prev)) return prev;
+      return [...prev.slice(0, -1), stripSnapshot];
     });
   }
 
@@ -619,18 +626,6 @@ export function useCopilotStream({
       reconnectTimeoutTimerRef.current = undefined;
     }
 
-    // Streaming began: the replay is producing chunks. Discard any snapshot
-    // that was saved for a restore-on-failure.
-    if (status === "streaming" && sessionId) {
-      clearTimeout(resumeGraceTimerRef.current);
-      resumeGraceTimerRef.current = undefined;
-      if (useCopilotStreamStore.getState().getCoord(sessionId).stripSnapshot) {
-        useCopilotStreamStore
-          .getState()
-          .updateCoord(sessionId, { stripSnapshot: null });
-      }
-    }
-
     // Resume finished without ever streaming (e.g. 204 Not Found because
     // the backend stream finished between REST fetch and resume GET).
     // Restore the stripped snapshot so the user sees the hydrated content
@@ -664,6 +659,26 @@ export function useCopilotStream({
       }
     }
   }, [status, sessionId, queryClient, isReconnectScheduled]);
+
+  // Discard the resume snapshot (and cancel the 8s grace timer) as soon as
+  // the replay has put something visible on screen. We do NOT gate on
+  // status === "streaming" alone because Perplexity deep-research streams
+  // empty reasoning-start / step-start chunks for minutes before any
+  // rendered content arrives — during which the Thinking-bubble would
+  // otherwise stay stuck and the grace timer restore would never fire.
+  useEffect(() => {
+    if (!sessionId) return;
+    const { stripSnapshot } = useCopilotStreamStore
+      .getState()
+      .getCoord(sessionId);
+    if (!stripSnapshot) return;
+    if (!hasVisibleAssistantContent(rawMessages)) return;
+    clearTimeout(resumeGraceTimerRef.current);
+    resumeGraceTimerRef.current = undefined;
+    useCopilotStreamStore
+      .getState()
+      .updateCoord(sessionId, { stripSnapshot: null });
+  }, [rawMessages, sessionId]);
 
   // Resume an active stream AFTER hydration completes.
   // IMPORTANT: Only runs when page loads with existing active stream (reconnection).

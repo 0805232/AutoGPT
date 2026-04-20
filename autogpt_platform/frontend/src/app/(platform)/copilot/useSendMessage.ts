@@ -126,16 +126,25 @@ export function useSendMessage({
     }
   }
 
+  // Hold dispatchToSession in a ref so the queued-send effect can fire
+  // exclusively on sessionId change (the real trigger) while still calling
+  // the latest closure — which captures the refreshed `sendMessage` after
+  // the session has updated.
+  const dispatchRef = useRef(dispatchToSession);
+  dispatchRef.current = dispatchToSession;
+
   useEffect(() => {
     if (!sessionId || !queuedSendRef.current) return;
     const queued = queuedSendRef.current;
     queuedSendRef.current = null;
     const prebuiltParts = pendingFilePartsRef.current;
     pendingFilePartsRef.current = [];
-    void dispatchToSession(sessionId, queued.text, queued.files, prebuiltParts);
-    // dispatchToSession depends on sendMessage implicitly; re-running when
-    // sessionId changes is the correct trigger for the queued send.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    void dispatchRef.current(
+      sessionId,
+      queued.text,
+      queued.files,
+      prebuiltParts,
+    );
   }, [sessionId]);
 
   async function onSend(message: string, files?: File[]) {

@@ -306,6 +306,18 @@ export function ChatMessagesContainer({
     if (lastPart.type === "text" && lastPart.text.trim().length > 0)
       return true;
 
+    // Reasoning chunks stream before the final text — while they have
+    // rendered content, the "Thinking..." indicator should give way to the
+    // reasoning view (e.g. Perplexity deep research streams minutes of
+    // reasoning before any answer text).
+    if (lastPart.type === "reasoning" && lastPart.text.trim().length > 0)
+      return true;
+
+    // step-start is a turn boundary emitted right before the next tool or
+    // text chunk. Treat it as inflight so the bubble transitions straight
+    // into the next part without flashing back to "Thinking...".
+    if (lastPart.type === "step-start") return true;
+
     if (
       lastPart.type.startsWith(TOOL_PART_PREFIX) &&
       "state" in lastPart &&

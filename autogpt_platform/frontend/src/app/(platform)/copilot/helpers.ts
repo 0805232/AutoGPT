@@ -3,6 +3,7 @@ import { getWebSocketToken } from "@/lib/supabase/actions";
 import type { UIMessage } from "ai";
 
 import { deleteV2DisconnectSessionStream } from "@/app/api/__generated__/endpoints/chat/chat";
+import { TOOL_PART_PREFIX } from "./components/JobStatsBar/constants";
 
 export const ORIGINAL_TITLE = "AutoGPT";
 
@@ -87,6 +88,26 @@ export function hasActiveBackendStream(result: { data?: unknown }): boolean {
     "active_stream" in d.data &&
     !!d.data.active_stream
   );
+}
+
+/**
+ * Whether the trailing assistant message has at least one part the UI
+ * would visibly render: text with non-empty content, reasoning with
+ * non-empty content, or any tool part (tool cards render regardless of
+ * state). Used to gate the resume-snapshot discard — the replay may stream
+ * empty reasoning-start / step-start chunks for minutes before any
+ * rendered content (e.g. Perplexity deep research), and we do not want to
+ * drop the pre-replay snapshot until the user actually sees something.
+ */
+export function hasVisibleAssistantContent(messages: UIMessage[]): boolean {
+  const last = messages[messages.length - 1];
+  if (last?.role !== "assistant") return false;
+  return last.parts.some((part) => {
+    if (part.type === "text" && part.text.trim().length > 0) return true;
+    if (part.type === "reasoning" && part.text.trim().length > 0) return true;
+    if (part.type.startsWith(TOOL_PART_PREFIX)) return true;
+    return false;
+  });
 }
 
 /** Mark any in-progress tool parts as completed/errored so spinners stop. */

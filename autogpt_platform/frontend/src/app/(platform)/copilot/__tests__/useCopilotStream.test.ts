@@ -42,6 +42,16 @@ vi.mock("../helpers", () => ({
       : String(arg ?? ""),
   hasActiveBackendStream: (result: { data?: unknown }) =>
     mockHasActiveBackendStream(result),
+  hasVisibleAssistantContent: (messages: UIMessage[]) => {
+    const last = messages[messages.length - 1];
+    if (last?.role !== "assistant") return false;
+    return last.parts.some((part: UIMessage["parts"][number]) => {
+      if (part.type === "text" && part.text.trim().length > 0) return true;
+      if (part.type === "reasoning" && part.text.trim().length > 0) return true;
+      if (part.type.startsWith("tool-")) return true;
+      return false;
+    });
+  },
   resolveInProgressTools: (msgs: UIMessage[]) => msgs,
   getSendSuppressionReason: () => null,
   disconnectSessionStream: (sid: string) => mockDisconnectSessionStream(sid),
@@ -261,6 +271,148 @@ describe("useCopilotStream — forced reconnect timeout (SECRT-2241)", () => {
       ([call]) => (call as { title?: string }).title === "Connection timed out",
     );
     expect(timeoutToast).toBeUndefined();
+  });
+});
+
+describe("useCopilotStream — content-gated snapshot clear", () => {
+  it("restores the snapshot when replay streams but no visible content arrives within the grace window", async () => {
+    const trailingAssistant: UIMessage = {
+      id: "hydrated-assistant",
+      role: "assistant",
+      parts: [{ type: "text", text: "hydrated content", state: "done" }],
+    };
+    mockMessages = [trailingAssistant];
+
+    const { rerender } = renderHook((args: Args) => useCopilotStream(args), {
+      initialProps: makeArgs({
+        hasActiveStream: true,
+        hydratedMessages: [trailingAssistant],
+      }),
+    });
+
+    expect(mockResumeStream).toHaveBeenCalledTimes(1);
+
+    // Our setMessages mock does not execute the updater, so
+    // stripAndResume's snapshot-capture produced null. Prime the store
+    // with the snapshot stripAndResume would have saved in real use.
+    useCopilotStreamStore
+      .getState()
+      .updateCoord("sess-1", { stripSnapshot: trailingAssistant });
+
+    // Replay begins streaming but all accumulated parts are invisible
+    // (step-start only — no rendered content). Status flips to "streaming".
+    mockMessages = [
+      {
+        id: "replay-assistant",
+        role: "assistant",
+        parts: [
+          { type: "step-start" } as unknown as UIMessage["parts"][number],
+        ],
+      },
+    ];
+    mockStatus = "streaming";
+    mockSetMessages.mockClear();
+    rerender(
+      makeArgs({
+        hasActiveStream: true,
+        hydratedMessages: [trailingAssistant],
+      }),
+    );
+
+    // Snapshot must remain armed: no visible content yet.
+    expect(
+      useCopilotStreamStore.getState().getCoord("sess-1").stripSnapshot,
+    ).not.toBeNull();
+
+    // Advance past the 8s grace window.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8_000);
+    });
+
+    // Restorer should have run: when prev contains the empty replay
+    // assistant, it swaps it for the snapshot.
+    const restorer = mockSetMessages.mock.calls.find(([arg]) => {
+      if (typeof arg !== "function") return false;
+      const next = (arg as (prev: UIMessage[]) => UIMessage[])([
+        {
+          id: "replay-assistant",
+          role: "assistant",
+          parts: [
+            { type: "step-start" } as unknown as UIMessage["parts"][number],
+          ],
+        } as UIMessage,
+      ]);
+      return (
+        Array.isArray(next) &&
+        next.length === 1 &&
+        next[0].id === "hydrated-assistant"
+      );
+    });
+    expect(restorer).toBeDefined();
+  });
+
+  it("clears the snapshot and cancels the grace timer once the replay produces visible content", async () => {
+    const trailingAssistant: UIMessage = {
+      id: "hydrated-assistant",
+      role: "assistant",
+      parts: [{ type: "text", text: "hydrated content", state: "done" }],
+    };
+    mockMessages = [trailingAssistant];
+
+    const { rerender } = renderHook((args: Args) => useCopilotStream(args), {
+      initialProps: makeArgs({
+        hasActiveStream: true,
+        hydratedMessages: [trailingAssistant],
+      }),
+    });
+
+    expect(mockResumeStream).toHaveBeenCalledTimes(1);
+
+    // Prime the snapshot manually (see the other test for why).
+    useCopilotStreamStore
+      .getState()
+      .updateCoord("sess-1", { stripSnapshot: trailingAssistant });
+
+    // Replay streams a reasoning part with actual content — this IS visible.
+    mockMessages = [
+      {
+        id: "replay-assistant",
+        role: "assistant",
+        parts: [
+          {
+            type: "reasoning",
+            text: "analyzing the question...",
+          } as unknown as UIMessage["parts"][number],
+        ],
+      },
+    ];
+    mockStatus = "streaming";
+    mockSetMessages.mockClear();
+    rerender(
+      makeArgs({
+        hasActiveStream: true,
+        hydratedMessages: [trailingAssistant],
+      }),
+    );
+
+    // Snapshot is discarded because visible content has arrived.
+    expect(
+      useCopilotStreamStore.getState().getCoord("sess-1").stripSnapshot,
+    ).toBeNull();
+
+    // Advance past 8s — the grace timer must have been cancelled, so no
+    // restore call should have been issued.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9_000);
+    });
+    const restorer = mockSetMessages.mock.calls.find(([arg]) => {
+      if (typeof arg !== "function") return false;
+      const next = (arg as (prev: UIMessage[]) => UIMessage[])([]);
+      return (
+        Array.isArray(next) && next.some((m) => m.id === "hydrated-assistant")
+      );
+    });
+    expect(restorer).toBeUndefined();
   });
 });
 
