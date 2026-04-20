@@ -275,10 +275,18 @@ class StreamError(StreamBaseResponse):
 
         The AI SDK uses z.strictObject({type, errorText}) which rejects
         any extra fields like `code` or `details`.
+
+        When ``code`` is set we prefix ``errorText`` with ``[code:<id>]`` so
+        the frontend can still parse a machine-readable code out of the
+        otherwise opaque text. Idempotent: if the caller already embedded
+        the prefix, we don't double it.
         """
+        text = self.errorText
+        if self.code and not text.lstrip().startswith(f"[code:{self.code}]"):
+            text = f"[code:{self.code}] {text}"
         data = {
             "type": self.type.value,
-            "errorText": self.errorText,
+            "errorText": text,
         }
         return f"data: {json_dumps(data)}\n\n"
 

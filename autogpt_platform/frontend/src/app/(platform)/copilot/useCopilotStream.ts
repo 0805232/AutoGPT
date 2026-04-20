@@ -87,6 +87,28 @@ const TOAST_BY_BACKEND_CODE: Record<
     fallbackDescription:
       "The assistant made too many empty tool calls in a row and was paused. Press Try Again to continue.",
   },
+  all_attempts_exhausted: {
+    title: "Conversation too long",
+    fallbackDescription:
+      "We couldn't fit this chat's history into the model after several attempts. Start a new chat or clear some history.",
+  },
+  sdk_stream_error: {
+    title: "AutoPilot ran into an error",
+    fallbackDescription:
+      "Something went wrong while the assistant was responding. Press Try Again to retry.",
+  },
+  sdk_error: {
+    title: "AutoPilot ran into an error",
+    fallbackDescription:
+      "The assistant couldn't complete this turn. Press Try Again to retry.",
+  },
+};
+
+/** Fallback toast shown for any `[code:X]` we don't have specific copy for. */
+const GENERIC_BACKEND_TOAST = {
+  title: "AutoPilot ran into a problem",
+  fallbackDescription:
+    "The assistant stopped unexpectedly. Press Try Again to retry.",
 };
 
 /**
@@ -405,13 +427,14 @@ export function useCopilotStream({
       // Backend error codes are encoded as `[code:<id>] <message>` because
       // the AI-SDK SSE schema (`z.strictObject({type, errorText})`) rejects
       // a top-level `code` field. Parse the prefix so we can surface a
-      // focused toast for the specific failure mode.
+      // focused toast for the specific failure mode; any coded error —
+      // including ones we don't have curated copy for — gets a generic
+      // "something went wrong" toast so backend hangs are never silent.
       const { code: backendCode, message: backendMessage } =
         parseBackendErrorCode(errorDetail);
-      const userToast = backendCode
-        ? TOAST_BY_BACKEND_CODE[backendCode]
-        : undefined;
-      if (userToast) {
+      if (backendCode) {
+        const userToast =
+          TOAST_BY_BACKEND_CODE[backendCode] ?? GENERIC_BACKEND_TOAST;
         toast({
           title: userToast.title,
           description: backendMessage || userToast.fallbackDescription,

@@ -1944,10 +1944,7 @@ def _check_empty_tool_breaker(
     return _EmptyToolBreakResult(
         count=consecutive,
         tripped=True,
-        error=StreamError(
-            errorText=f"[code:{error_code}] {error_msg}",
-            code=error_code,
-        ),
+        error=StreamError(errorText=error_msg, code=error_code),
         error_msg=error_msg,
         error_code=error_code,
     )
@@ -2082,24 +2079,23 @@ async def _run_stream_attempt(
                         idle_seconds,
                         ", ".join(unresolved_tool_names) or "none",
                     )
-                    # errorText is prefixed with `[code:<id>]` so the
-                    # frontend can parse a machine-readable code out of
-                    # the AI-SDK's strict `{type, errorText}` protocol
-                    # (which forbids extra top-level fields). The
-                    # retryable marker written to the session is stripped
-                    # of the code prefix to keep the chat bubble readable.
+                    # The retryable marker written to the session omits
+                    # the `[code:<id>]` prefix — the AI SDK serializer
+                    # (`StreamError.to_sse`) attaches that automatically
+                    # on the wire so the frontend can still parse a
+                    # machine-readable code out of the otherwise opaque
+                    # `{type, errorText}` schema.
                     stream_error_code = "idle_timeout"
                     tool_phrase = (
                         f" while running {_humanise_tool_list(unresolved_tool_names)}"
                         if unresolved_tool_names
                         else ""
                     )
-                    display_msg = (
+                    stream_error_msg = (
                         f"AutoPilot stopped responding{tool_phrase}. "
                         "This usually means a tool got stuck. Please try again."
                     )
-                    _append_error_marker(ctx.session, display_msg, retryable=True)
-                    stream_error_msg = f"[code:{stream_error_code}] {display_msg}"
+                    _append_error_marker(ctx.session, stream_error_msg, retryable=True)
                     yield StreamError(
                         errorText=stream_error_msg,
                         code=stream_error_code,
@@ -3713,10 +3709,7 @@ async def stream_chat_completion_sdk(
             else:
                 error_text = _friendly_error_text(safe_err)
                 error_code = "sdk_stream_error"
-            yield StreamError(
-                errorText=f"[code:{error_code}] {error_text}",
-                code=error_code,
-            )
+            yield StreamError(errorText=error_text, code=error_code)
 
         # Copy token usage from retry state to outer-scope accumulators
         # so the finally block can persist them.
@@ -3814,10 +3807,7 @@ async def stream_chat_completion_sdk(
             e, asyncio.CancelledError
         ) or _is_sdk_disconnect_error(e)
         if not is_cancellation:
-            yield StreamError(
-                errorText=f"[code:{code}] {display_msg}",
-                code=code,
-            )
+            yield StreamError(errorText=display_msg, code=code)
 
         raise
     finally:

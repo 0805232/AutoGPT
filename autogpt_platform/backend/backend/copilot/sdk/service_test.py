@@ -733,6 +733,31 @@ class TestIdleTimeoutConstant:
         assert _IDLE_TIMEOUT_SECONDS == 10 * 60
 
 
+class TestStreamErrorCodePrefix:
+    """StreamError.to_sse auto-prefixes errorText with `[code:<id>]` when a
+    code is set, so the frontend can parse a machine-readable code out of
+    the AI-SDK's strict `{type, errorText}` schema."""
+
+    def test_auto_prefix_when_code_set(self):
+        from backend.copilot.response_model import StreamError
+
+        sse = StreamError(errorText="Boom", code="idle_timeout").to_sse()
+        assert '"errorText":"[code:idle_timeout] Boom"' in sse
+
+    def test_no_prefix_when_code_missing(self):
+        from backend.copilot.response_model import StreamError
+
+        sse = StreamError(errorText="Boom").to_sse()
+        assert '"errorText":"Boom"' in sse
+
+    def test_does_not_double_prefix(self):
+        from backend.copilot.response_model import StreamError
+
+        sse = StreamError(errorText="[code:x] Boom", code="x").to_sse()
+        assert "[code:x] [code:x]" not in sse
+        assert '"errorText":"[code:x] Boom"' in sse
+
+
 class TestHumaniseToolList:
     """Tool-name formatter used to build the idle-timeout error message."""
 
