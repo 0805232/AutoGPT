@@ -724,10 +724,12 @@ async def _baseline_llm_caller(
             except Exception:
                 pass
 
-        # Close any still-open reasoning block before we emit the final
-        # text tail / close the text block.  A stream that ends with
-        # reasoning-only (no text, no tool_use) still needs a matched
-        # ``reasoning-end`` so the frontend collapse finalises.
+    finally:
+        # Close open blocks on both normal and exception paths so the
+        # frontend always sees matched start/end pairs.  An exception mid
+        # ``async for chunk in response`` would otherwise leave reasoning
+        # and/or text unterminated and only ``StreamFinishStep`` emitted —
+        # the Reasoning / Text collapses would never finalise.
         _close_reasoning_block_if_open(state)
         # Flush any buffered text held back by the thinking stripper.
         tail = state.thinking_stripper.flush()
@@ -739,12 +741,10 @@ async def _baseline_llm_caller(
             state.pending_events.append(
                 StreamTextDelta(id=state.text_block_id, delta=tail)
             )
-        # Close text block
         if state.text_started:
             state.pending_events.append(StreamTextEnd(id=state.text_block_id))
             state.text_started = False
             state.text_block_id = str(uuid.uuid4())
-    finally:
         # Always persist partial text so the session history stays consistent,
         # even when the stream is interrupted by an exception.
         state.assistant_text += round_text
@@ -1818,25 +1818,14 @@ async def stream_chat_completion_baseline(
         _stream_error = True
         error_msg = str(e) or type(e).__name__
         logger.error("[Baseline] Streaming error: %s", error_msg, exc_info=True)
-        # Close any open text block.  The llm_caller's finally block
-        # already appended StreamFinishStep to pending_events, so we must
-        # insert StreamTextEnd *before* StreamFinishStep to preserve the
-        # protocol ordering:
-        #   StreamStartStep -> StreamTextStart -> ...deltas... ->
+        # ``_baseline_llm_caller``'s finally block closes any open
+        # reasoning / text blocks and appends ``StreamFinishStep`` on
+        # both normal and exception paths, so pending_events already has
+        # the correct protocol ordering:
+        #   StreamStartStep -> StreamReasoningStart -> ...deltas... ->
+        #   StreamReasoningEnd -> StreamTextStart -> ...deltas... ->
         #   StreamTextEnd -> StreamFinishStep
-        # Appending (or yielding directly) would place it after
-        # StreamFinishStep, violating the protocol.
-        if state.text_started:
-            # Find the last StreamFinishStep and insert before it.
-            insert_pos = len(state.pending_events)
-            for i in range(len(state.pending_events) - 1, -1, -1):
-                if isinstance(state.pending_events[i], StreamFinishStep):
-                    insert_pos = i
-                    break
-            state.pending_events.insert(
-                insert_pos, StreamTextEnd(id=state.text_block_id)
-            )
-        # Drain pending events in correct order
+        # Just drain what's buffered, then yield the error.
         for evt in state.pending_events:
             yield evt
         state.pending_events.clear()

@@ -1774,6 +1774,48 @@ class TestBaselineReasoningStreaming:
         assert "StreamTextDelta" not in types
 
     @pytest.mark.asyncio
+    async def test_reasoning_closed_on_mid_stream_exception(self):
+        """Regression guard: an exception during the streaming loop must
+        still emit ``StreamReasoningEnd`` (and ``StreamTextEnd`` when a
+        text block is open) before ``StreamFinishStep`` — the frontend
+        collapse relies on matched start/end pairs, and the outer handler
+        no longer patches these after-the-fact."""
+        state = _BaselineStreamState(model="anthropic/claude-sonnet-4-6")
+
+        async def failing_stream():
+            yield _make_delta_chunk(reasoning="thinking...")
+            raise RuntimeError("boom")
+
+        stream = MagicMock()
+        stream.close = AsyncMock()
+        stream.__aiter__ = lambda self: failing_stream()
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=stream)
+
+        with patch(
+            "backend.copilot.baseline.service._get_openai_client",
+            return_value=mock_client,
+        ):
+            with pytest.raises(RuntimeError):
+                await _baseline_llm_caller(
+                    messages=[{"role": "user", "content": "hi"}],
+                    tools=[],
+                    state=state,
+                )
+
+        types = [type(e).__name__ for e in state.pending_events]
+        # The reasoning block was opened, the exception fired, and the
+        # finally block must have closed it before emitting the finish
+        # step.
+        assert "StreamReasoningStart" in types
+        assert "StreamReasoningEnd" in types
+        assert "StreamFinishStep" in types
+        assert types.index("StreamReasoningEnd") < types.index("StreamFinishStep")
+        # State flags are reset so a retried round starts with fresh ids.
+        assert state.reasoning_started is False
+
+    @pytest.mark.asyncio
     async def test_reasoning_param_sent_on_anthropic_routes(self):
         """Anthropic route gets ``reasoning.max_tokens`` on the request."""
         state = _BaselineStreamState(model="anthropic/claude-sonnet-4-6")
