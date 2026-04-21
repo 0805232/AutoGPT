@@ -108,6 +108,10 @@ class MessageHandler:
                 await self._stream_batch(batch, ctx, adapter, target_id)
         finally:
             state.processing = False
+            # Drop the empty state so the dict doesn't grow unbounded across
+            # the bot's lifetime.
+            if not state.pending:
+                self._targets.pop(target_id, None)
 
     async def _stream_batch(
         self,
@@ -122,11 +126,11 @@ class MessageHandler:
         cache_key = f"copilot-bot:session:{ctx.platform}:{target_id}"
         cached_session_id = await redis.get(cache_key)
 
-        async def _cache_session(sid: str) -> None:
-            await redis.set(cache_key, sid, ex=SESSION_TTL)
-
-        def _on_session_id(sid: str) -> None:
-            asyncio.create_task(_cache_session(sid))
+        async def _on_session_id(sid: str) -> None:
+            try:
+                await redis.set(cache_key, sid, ex=SESSION_TTL)
+            except Exception:
+                logger.warning("Failed to cache session id for target %s", target_id)
 
         flush_at = adapter.chunk_flush_at
         buffer = ""
@@ -194,9 +198,10 @@ class MessageHandler:
                     await self._prompt_user_link(ctx, adapter)
                     return False
             else:
-                result = await self._api.resolve_server(
-                    ctx.platform, ctx.server_id or ""
-                )
+                if not ctx.server_id:
+                    logger.error("Non-DM message missing server_id: %r", ctx)
+                    return False
+                result = await self._api.resolve_server(ctx.platform, ctx.server_id)
                 if not result.linked:
                     await adapter.send_message(
                         ctx.channel_id,

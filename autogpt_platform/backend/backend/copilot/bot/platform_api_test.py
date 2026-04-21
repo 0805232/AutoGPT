@@ -1,10 +1,12 @@
 """Tests for the bot's thin facade over PlatformLinkingManagerClient."""
 
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from backend.copilot.response_model import StreamError, StreamFinish, StreamTextDelta
 from backend.platform_linking.models import (
     ChatTurnHandle,
     LinkTokenResponse,
@@ -102,12 +104,8 @@ class TestCreateLinkTokens:
 class TestStreamChat:
     @pytest.mark.asyncio
     async def test_yields_text_deltas_and_terminates_on_finish(self, api: PlatformAPI):
-        from backend.copilot.response_model import StreamFinish, StreamTextDelta
-
         handle = ChatTurnHandle(session_id="sess", turn_id="turn", user_id="u1")
         api._client.start_chat_turn = AsyncMock(return_value=handle)
-
-        import asyncio
 
         queue: asyncio.Queue = asyncio.Queue()
         await queue.put(StreamTextDelta(id="1", delta="Hello "))
@@ -115,6 +113,9 @@ class TestStreamChat:
         await queue.put(StreamFinish())
 
         captured_session_ids: list[str] = []
+
+        async def capture(sid: str) -> None:
+            captured_session_ids.append(sid)
 
         with (
             patch(
@@ -131,7 +132,7 @@ class TestStreamChat:
                 platform="discord",
                 platform_user_id="u1",
                 message="hi",
-                on_session_id=captured_session_ids.append,
+                on_session_id=capture,
             ):
                 chunks.append(chunk)
 
@@ -140,12 +141,8 @@ class TestStreamChat:
 
     @pytest.mark.asyncio
     async def test_surfaces_stream_error(self, api: PlatformAPI):
-        from backend.copilot.response_model import StreamError
-
         handle = ChatTurnHandle(session_id="sess", turn_id="turn", user_id="u1")
         api._client.start_chat_turn = AsyncMock(return_value=handle)
-
-        import asyncio
 
         queue: asyncio.Queue = asyncio.Queue()
         await queue.put(StreamError(errorText="executor crashed"))

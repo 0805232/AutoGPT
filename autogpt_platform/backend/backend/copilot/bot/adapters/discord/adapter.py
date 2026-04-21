@@ -27,6 +27,7 @@ class DiscordAdapter(PlatformAdapter):
         self._tree = app_commands.CommandTree(self._client)
         self._api = api
         self._on_message_callback: Optional[MessageCallback] = None
+        self._commands_synced = False
 
         self._register_events()
         commands.register(self._tree, self._api)
@@ -136,15 +137,20 @@ class DiscordAdapter(PlatformAdapter):
         @self._client.event
         async def on_ready() -> None:
             logger.info(f"Discord bot connected as {self._client.user}")
+            # Sync slash commands once per process — on_ready fires on every
+            # gateway reconnect, but the command tree only needs uploading once.
+            if self._commands_synced:
+                return
             try:
                 synced = await self._tree.sync()
+                self._commands_synced = True
                 logger.info(f"Synced {len(synced)} slash commands")
             except Exception:
                 logger.exception("Failed to sync slash commands")
 
         @self._client.event
         async def on_message(message: discord.Message) -> None:
-            if message.author == self._client.user or message.author.bot:
+            if message.author.bot:
                 return
             if self._on_message_callback is None:
                 return

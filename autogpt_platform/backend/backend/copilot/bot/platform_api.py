@@ -1,8 +1,9 @@
 """Bot-side facade over `PlatformLinkingManagerClient` + `stream_registry`."""
 
+import asyncio
 import logging
 from dataclasses import dataclass
-from typing import AsyncGenerator, Callable, Optional
+from typing import AsyncGenerator, Awaitable, Callable, Optional
 
 from backend.copilot import stream_registry
 from backend.copilot.response_model import StreamError, StreamFinish, StreamTextDelta
@@ -18,6 +19,11 @@ from backend.util.exceptions import (
     LinkAlreadyExistsError,
     NotFoundError,
 )
+
+# How long to wait for a single chunk from the copilot stream before giving
+# up. Covers the case where the backend crashes mid-stream and never sends
+# ``StreamFinish`` — without this, the bot would hang forever on ``queue.get()``.
+STREAM_CHUNK_TIMEOUT_SECONDS = 120
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +127,7 @@ class PlatformAPI:
         message: str,
         session_id: Optional[str] = None,
         platform_server_id: Optional[str] = None,
-        on_session_id: Optional[Callable[[str], None]] = None,
+        on_session_id: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> AsyncGenerator[str, None]:
         """Start a copilot turn and yield text deltas from the stream.
 
@@ -138,7 +144,7 @@ class PlatformAPI:
             )
         )
         if on_session_id:
-            on_session_id(handle.session_id)
+            await on_session_id(handle.session_id)
 
         queue = await stream_registry.subscribe_to_session(
             session_id=handle.session_id,
@@ -151,7 +157,18 @@ class PlatformAPI:
 
         try:
             while True:
-                chunk = await queue.get()
+                try:
+                    chunk = await asyncio.wait_for(
+                        queue.get(), timeout=STREAM_CHUNK_TIMEOUT_SECONDS
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Stream idle timeout after %ss for session %s",
+                        STREAM_CHUNK_TIMEOUT_SECONDS,
+                        handle.session_id,
+                    )
+                    yield "\n[Error: response timed out]"
+                    return
                 if isinstance(chunk, StreamTextDelta):
                     if chunk.delta:
                         yield chunk.delta

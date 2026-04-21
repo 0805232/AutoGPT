@@ -5,6 +5,7 @@ other services to push messages into chat platforms.
 
 import asyncio
 import logging
+from concurrent.futures import Future
 
 from backend.platform_linking.models import Platform
 from backend.util.service import AppService, AppServiceClient, endpoint_to_async, expose
@@ -31,7 +32,10 @@ class CoPilotChatBridge(AppService):
         return Settings().config.copilot_chat_bridge_port
 
     def run_service(self) -> None:
-        asyncio.run_coroutine_threadsafe(self._run_adapters(), self.shared_event_loop)
+        future = asyncio.run_coroutine_threadsafe(
+            self._run_adapters(), self.shared_event_loop
+        )
+        future.add_done_callback(_log_adapters_exit)
         super().run_service()
 
     async def _run_adapters(self) -> None:
@@ -70,11 +74,12 @@ class CoPilotChatBridge(AppService):
         """Deliver a message to a channel on the given platform.
 
         Stub — scaffolding for the inbound-RPC pattern (backend → chat
-        platform). Not yet wired to a concrete adapter.
+        platform). Not yet wired to a concrete adapter. Callers must not use
+        ``request_retry=True`` on the client until this is implemented, since
+        ``ValueError`` crosses the RPC boundary as a client-side 4xx-ish error
+        rather than a transient 5xx.
         """
-        raise NotImplementedError(
-            f"send_message_to_channel not yet wired for {platform.value}"
-        )
+        raise ValueError(f"send_message_to_channel not yet wired for {platform.value}")
 
     @expose
     async def send_dm(
@@ -85,9 +90,10 @@ class CoPilotChatBridge(AppService):
     ) -> bool:
         """Deliver a DM to a user on the given platform.
 
-        Stub — scaffolding for the inbound-RPC pattern.
+        Stub — scaffolding for the inbound-RPC pattern. See
+        :meth:`send_message_to_channel` for the retry caveat.
         """
-        raise NotImplementedError(f"send_dm not yet wired for {platform.value}")
+        raise ValueError(f"send_dm not yet wired for {platform.value}")
 
 
 class CoPilotChatBridgeClient(AppServiceClient):
@@ -99,6 +105,16 @@ class CoPilotChatBridgeClient(AppServiceClient):
         CoPilotChatBridge.send_message_to_channel
     )
     send_dm = endpoint_to_async(CoPilotChatBridge.send_dm)
+
+
+def _log_adapters_exit(future: "Future[None]") -> None:
+    """Surface exceptions from ``_run_adapters`` — the coroutine is launched
+    via ``run_coroutine_threadsafe``, which swallows them into the returned
+    future otherwise.
+    """
+    exc = future.exception()
+    if exc is not None:
+        logger.error("CoPilotChatBridge adapters crashed: %r", exc, exc_info=exc)
 
 
 def _build_adapters(api: PlatformAPI) -> list[PlatformAdapter]:

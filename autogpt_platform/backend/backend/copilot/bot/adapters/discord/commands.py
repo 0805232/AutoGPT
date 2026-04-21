@@ -108,18 +108,27 @@ async def _handle_help(interaction: discord.Interaction) -> None:
 
 
 async def _handle_unlink(interaction: discord.Interaction) -> None:
-    settings_url = f"{Settings().config.frontend_base_url}/profile/settings"
+    config = Settings().config
+    base_url = config.frontend_base_url or config.platform_base_url
+    message = (
+        "Unlinking requires authentication, so it has to be done "
+        "from the web. Click below to manage your linked accounts."
+    )
+
+    if not base_url:
+        await interaction.response.send_message(
+            f"{message}\n\nOpen your AutoGPT settings and visit "
+            "Profile → Linked accounts.",
+            ephemeral=True,
+        )
+        return
+
     view = discord.ui.View()
     view.add_item(
         discord.ui.Button(
             style=discord.ButtonStyle.link,
             label="Open Settings",
-            url=settings_url,
+            url=f"{base_url}/profile/settings",
         )
     )
-    await interaction.response.send_message(
-        "Unlinking requires authentication, so it has to be done "
-        "from the web. Click below to manage your linked accounts.",
-        ephemeral=True,
-        view=view,
-    )
+    await interaction.response.send_message(message, ephemeral=True, view=view)

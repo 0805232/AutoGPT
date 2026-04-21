@@ -7,10 +7,10 @@ these methods.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Callable, Coroutine, Literal, Optional
+from typing import Awaitable, Callable, Literal, Optional
 
-# Callback signature: (ctx, adapter) -> None
-MessageCallback = Callable[["MessageContext", "PlatformAdapter"], Coroutine]
+# Callback signature: (ctx, adapter) -> awaitable None
+MessageCallback = Callable[["MessageContext", "PlatformAdapter"], Awaitable[None]]
 
 # Where the message came from:
 # - "dm"      — 1:1 conversation, reply in-place
