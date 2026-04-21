@@ -23,9 +23,7 @@ def test_build_missing_credentials_excludes_auto_creds():
     build_missing_credentials_from_graph() should use regular_credentials_inputs
     and thus exclude auto_credentials from the "missing" set.
     """
-    from backend.copilot.tools.utils import (
-        build_missing_credentials_from_graph,
-    )
+    from backend.copilot.tools.utils import build_missing_credentials_from_graph
 
     regular_field = _make_regular_field()
 

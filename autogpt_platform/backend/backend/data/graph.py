@@ -867,6 +867,77 @@ class GraphModel(Graph, GraphMeta):
                     )
                 )
 
+            # Validate auto-credentials fields (e.g. GoogleDriveFileField).
+            # Blocks with auto-credentials fields expect an *object* whose
+            # embedded `_credentials_id` carries the user's credential at
+            # run time — that field is only populated by a provider-specific
+            # picker (e.g. the Google Drive picker for google-drive-picker
+            # format). Hardcoding a bare ID or a partial object into
+            # `input_default` produces an agent that either fails save-time
+            # schema validation (bare string rejected by pydantic) or passes
+            # it but crashes at execution time because
+            # `_acquire_auto_credentials` has no `_credentials_id` to resolve.
+            # Catch the anti-pattern for any auto-credentials field; tailor
+            # the remediation text to whichever format is declared so that
+            # future auto-credentials pickers don't inherit a stale hint.
+            for kwarg_name, info in InputSchema.get_auto_credentials_fields().items():
+                field_name = info["field_name"]
+                field_schema = InputSchema.get_field_schema(field_name)
+
+                # An upstream link will supply the value at run time — fine.
+                has_incoming = any(
+                    sanitize_pin_name(link.sink_name) == sanitize_pin_name(field_name)
+                    for link in input_links.get(node.id, [])
+                )
+                if has_incoming:
+                    continue
+
+                value = node.input_default.get(field_name)
+                if value is None or value == "":
+                    # Nothing set and nothing linked. Existing required-field
+                    # check above already handles the "required but missing"
+                    # case; we don't double-report here.
+                    continue
+
+                picker_format = field_schema.get("format")
+                if picker_format == "google-drive-picker":
+                    remediation = (
+                        f"Add an AgentGoogleDriveFileInputBlock node to the "
+                        f"graph and link its 'result' output to "
+                        f"{field_name!r} instead. That block renders a "
+                        f"Google Drive picker at run time so whoever runs "
+                        f"the agent supplies their own credentials via the "
+                        f"picked file."
+                    )
+                else:
+                    # Generic fallback for any future auto-credentials format
+                    # we haven't written specific guidance for yet.
+                    remediation = (
+                        f"This field expects a picker-populated object "
+                        f"containing a '_credentials_id'. Wire the matching "
+                        f"input block for this provider into {field_name!r} "
+                        f"so whoever runs the agent supplies their own "
+                        f"credentials at run time."
+                    )
+
+                if isinstance(value, str):
+                    node_errors[node.id][field_name] = (
+                        f"{field_name!r} was set to a bare string ID. This "
+                        f"field expects an object carrying the user's "
+                        f"credentials; a hardcoded ID can't authenticate. "
+                        f"{remediation}"
+                    )
+                    continue
+
+                if isinstance(value, dict) and not value.get("_credentials_id"):
+                    node_errors[node.id][field_name] = (
+                        f"{field_name!r} is hardcoded without credentials "
+                        f"(no '_credentials_id'). This field needs the "
+                        f"user's OAuth credential, which is only populated "
+                        f"by the picker. {remediation}"
+                    )
+                    continue
+
             # Validate dependencies between fields
             for field_name in input_fields.keys():
                 field_json_schema = InputSchema.get_field_schema(field_name)
