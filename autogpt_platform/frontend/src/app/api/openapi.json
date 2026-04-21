@@ -10325,46 +10325,6 @@
         "required": ["success", "platform", "platform_user_id"],
         "title": "ConfirmUserLinkResponse"
       },
-      "ConfirmLinkResponse": {
-        "properties": {
-          "success": { "type": "boolean", "title": "Success" },
-          "link_type": {
-            "$ref": "#/components/schemas/LinkType",
-            "default": "SERVER"
-          },
-          "platform": { "type": "string", "title": "Platform" },
-          "platform_server_id": {
-            "type": "string",
-            "title": "Platform Server Id"
-          },
-          "server_name": {
-            "anyOf": [{ "type": "string" }, { "type": "null" }],
-            "title": "Server Name"
-          }
-        },
-        "type": "object",
-        "required": [
-          "success",
-          "platform",
-          "platform_server_id",
-          "server_name"
-        ],
-        "title": "ConfirmLinkResponse"
-      },
-      "ConfirmUserLinkResponse": {
-        "properties": {
-          "success": { "type": "boolean", "title": "Success" },
-          "link_type": {
-            "$ref": "#/components/schemas/LinkType",
-            "default": "USER"
-          },
-          "platform": { "type": "string", "title": "Platform" },
-          "platform_user_id": { "type": "string", "title": "Platform User Id" }
-        },
-        "type": "object",
-        "required": ["success", "platform", "platform_user_id"],
-        "title": "ConfirmUserLinkResponse"
-      },
       "ContentType": {
         "type": "string",
         "enum": [
