@@ -150,9 +150,13 @@ class TestIsReasoningRoute:
         assert _is_reasoning_route("moonshotai/kimi-k2.6")
         assert _is_reasoning_route("moonshotai/kimi-k2-thinking")
         assert _is_reasoning_route("moonshotai/kimi-k2.5")
-        # Direct (non-OpenRouter) model ids also resolve via the ``kimi``
-        # substring so a future bare ``kimi-k3`` id would still match.
+        # Direct (non-OpenRouter) model ids also resolve via the ``kimi-``
+        # prefix so a future bare ``kimi-k3`` id would still match.
         assert _is_reasoning_route("kimi-k2-instruct")
+        # Provider-prefixed bare kimi ids (without the ``moonshotai/``
+        # prefix) are also recognised — the match anchors on the final
+        # path segment.
+        assert _is_reasoning_route("openrouter/kimi-k2.6")
 
     def test_other_providers_rejected(self):
         assert not _is_reasoning_route("openai/gpt-4o")
@@ -160,6 +164,14 @@ class TestIsReasoningRoute:
         assert not _is_reasoning_route("xai/grok-4")
         assert not _is_reasoning_route("meta-llama/llama-3.3-70b-instruct")
         assert not _is_reasoning_route("deepseek/deepseek-r1")
+
+    def test_kimi_substring_false_positives_rejected(self):
+        # Regression: the previous implementation matched any model whose
+        # name contained the substring ``kimi`` — including unrelated model
+        # ids like ``hakimi``.  The anchored match below rejects them.
+        assert not _is_reasoning_route("some-provider/hakimi-large")
+        assert not _is_reasoning_route("hakimi")
+        assert not _is_reasoning_route("akimi-7b")
 
 
 class TestReasoningExtraBody:

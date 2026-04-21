@@ -1,7 +1,8 @@
 """Extended-thinking wire support for the baseline (OpenRouter) path.
 
-Anthropic routes on OpenRouter expose extended thinking through
-non-OpenAI extension fields that the OpenAI Python SDK doesn't model:
+OpenRouter routes that support extended thinking (Anthropic Claude and
+Moonshot Kimi today) expose reasoning through non-OpenAI extension fields
+that the OpenAI Python SDK doesn't model:
 
 * ``reasoning`` (legacy string) — enabled by ``include_reasoning: true``.
 * ``reasoning_content`` — DeepSeek / some OpenRouter routes.
@@ -17,7 +18,8 @@ This module keeps the wire-level concerns in one place:
   one streaming round and emits ``StreamReasoning*`` events so the caller
   only has to plumb the events into its pending queue.
 * :func:`reasoning_extra_body` builds the ``extra_body`` fragment for the
-  OpenAI client call.  Returns ``None`` on non-Anthropic routes.
+  OpenAI client call.  Returns ``None`` for routes without reasoning
+  support (see :func:`_is_reasoning_route`).
 """
 
 from __future__ import annotations
@@ -159,14 +161,24 @@ def _is_reasoning_route(model: str) -> bool:
     Kept separate from :func:`backend.copilot.baseline.service._is_anthropic_model`
     because ``cache_control`` is strictly Anthropic-specific (Moonshot does
     its own auto-caching), so the two gates must not conflate.
+
+    The Kimi match anchors on the ``moonshotai/`` provider prefix or on a
+    bare / OpenRouter-prefixed ``kimi-`` model id (``kimi-k2.6``,
+    ``moonshotai/kimi-k2-thinking``, ``openrouter/kimi-k2.6``), so unrelated
+    models that happen to contain ``kimi`` as a substring (e.g. a
+    hypothetical ``some-provider/hakimi-large``) are not treated as
+    reasoning routes.
     """
     lowered = model.lower()
-    return (
-        "claude" in lowered
-        or lowered.startswith("anthropic")
-        or lowered.startswith("moonshotai/")
-        or "kimi" in lowered
-    )
+    if "claude" in lowered or lowered.startswith("anthropic"):
+        return True
+    if lowered.startswith("moonshotai/"):
+        return True
+    # Match a ``kimi-`` model id at string start or immediately after a
+    # provider prefix ``/`` — avoids substring false positives like
+    # ``hakimi``.
+    bare = lowered.rsplit("/", 1)[-1]
+    return bare.startswith("kimi-")
 
 
 def reasoning_extra_body(model: str, max_thinking_tokens: int) -> dict[str, Any] | None:
