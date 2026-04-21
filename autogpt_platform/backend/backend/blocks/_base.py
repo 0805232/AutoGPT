@@ -764,6 +764,29 @@ class Block(ABC, Generic[BlockSchemaInputType, BlockSchemaOutputType]):
                     block_id=self.id,
                 )
 
+        # Ensure auto-credential kwargs are present and non-None before we
+        # hand off to run(). A missing auto-credential means the upstream
+        # field (e.g. a Google Drive picker) didn't embed a _credentials_id,
+        # or the executor couldn't resolve it. Without this guard, run()
+        # would crash with a TypeError (missing required kwarg) or an
+        # opaque AttributeError deep inside the provider SDK.
+        # Dry-run skips because the executor intentionally runs blocks
+        # without resolved creds for schema validation.
+        if not is_dry_run:
+            for kwarg_name in self.input_schema.get_auto_credentials_fields():
+                kwargs.setdefault(kwarg_name, None)
+                if kwargs[kwarg_name] is None:
+                    raise BlockExecutionError(
+                        message=(
+                            f"Missing credentials for '{kwarg_name}'. "
+                            "Select a file via the picker (which carries "
+                            "its credentials), or connect credentials for "
+                            "this block."
+                        ),
+                        block_name=self.name,
+                        block_id=self.id,
+                    )
+
         # Use the validated input data
         async for output_name, output_data in self.run(
             self.input_schema(**{k: v for k, v in input_data.items() if v is not None}),
