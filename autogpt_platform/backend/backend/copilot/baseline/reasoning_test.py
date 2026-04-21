@@ -108,12 +108,13 @@ class TestOpenRouterDeltaExtension:
         # A malformed payload (e.g. reasoning_details shipped as a string
         # rather than a list) must not abort the stream — log it and
         # return an empty extension so valid text/tool events keep flowing.
-        from openai.types.chat.chat_completion_chunk import ChoiceDelta
+        # A plain mock is used here because ``from_delta`` only reads
+        # ``delta.model_extra`` — avoids reaching into pydantic internals
+        # (``__pydantic_extra__``) that could be renamed across versions.
+        from unittest.mock import MagicMock
 
-        delta = ChoiceDelta.model_validate({"role": "assistant"})
-        object.__setattr__(
-            delta, "__pydantic_extra__", {"reasoning_details": "not a list"}
-        )
+        delta = MagicMock(spec=ChoiceDelta)
+        delta.model_extra = {"reasoning_details": "not a list"}
         with caplog.at_level("WARNING"):
             ext = OpenRouterDeltaExtension.from_delta(delta)
         assert ext.reasoning_details == []

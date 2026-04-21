@@ -351,6 +351,10 @@ class _BaselineStreamState:
     # generate one warning per streaming call.
     cost_missing_logged: bool = False
     thinking_stripper: _ThinkingStripper = field(default_factory=_ThinkingStripper)
+    # MUTATE in place only — ``__post_init__`` hands this list reference to
+    # ``BaselineReasoningEmitter`` so reasoning rows can be appended as
+    # deltas stream in.  Reassigning (``state.session_messages = [...]``)
+    # would silently detach the emitter from the new list.
     session_messages: list[ChatMessage] = field(default_factory=list)
     # Tracks how much of ``assistant_text`` has already been flushed to
     # ``session.messages`` via mid-loop pending drains, so the ``finally``
