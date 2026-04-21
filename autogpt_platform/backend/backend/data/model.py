@@ -607,6 +607,8 @@ class CredentialsFieldInfo(BaseModel, Generic[CP, CT]):
     discriminator: Optional[str] = None
     discriminator_mapping: Optional[dict[str, CP]] = None
     discriminator_values: set[Any] = Field(default_factory=set)
+    is_auto_credential: bool = False
+    input_field_name: Optional[str] = None
 
     @classmethod
     def combine(
@@ -694,6 +696,9 @@ class CredentialsFieldInfo(BaseModel, Generic[CP, CT]):
                 + "_credentials"
             )
 
+            # Propagate is_auto_credential from the combined field.
+            # All fields in a group should share the same is_auto_credential
+            # value since auto and regular credentials serve different purposes.
             result[group_key] = (
                 CredentialsFieldInfo[CP, CT](
                     credentials_provider=combined.provider,
@@ -702,6 +707,8 @@ class CredentialsFieldInfo(BaseModel, Generic[CP, CT]):
                     discriminator=combined.discriminator,
                     discriminator_mapping=combined.discriminator_mapping,
                     discriminator_values=set(all_discriminator_values),
+                    is_auto_credential=combined.is_auto_credential,
+                    input_field_name=combined.input_field_name,
                 ),
                 combined_keys,
             )
@@ -726,7 +733,9 @@ class CredentialsFieldInfo(BaseModel, Generic[CP, CT]):
             credentials_scopes=self.required_scopes,
             discriminator=self.discriminator,
             discriminator_mapping=self.discriminator_mapping,
-            discriminator_values=set(self.discriminator_values),  # defensive copy
+            discriminator_values=set(self.discriminator_values),
+            is_auto_credential=self.is_auto_credential,
+            input_field_name=self.input_field_name,
         )
 
 
