@@ -8,7 +8,12 @@ vi.mock("@/app/api/__generated__/endpoints/integrations/integrations", () => ({
 import { postV1GetPickerToken } from "@/app/api/__generated__/endpoints/integrations/integrations";
 import { fetchPickerAccessToken } from "../useGoogleDrivePicker";
 
-const mockPost = vi.mocked(postV1GetPickerToken);
+// Keep the cast rather than `vi.mocked(postV1GetPickerToken)` so the
+// intentionally-malformed mock responses below (missing `headers`, empty
+// `data`, non-200 status) don't have to satisfy the generated
+// `postV1GetPickerTokenResponse` union — these tests exercise defensive
+// paths against misshapen server responses.
+const mockPost = postV1GetPickerToken as unknown as ReturnType<typeof vi.fn>;
 
 afterEach(() => {
   mockPost.mockReset();
