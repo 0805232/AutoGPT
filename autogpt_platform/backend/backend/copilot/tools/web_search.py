@@ -66,9 +66,7 @@ class WebSearchTool(BaseTool):
         return (
             "Search the web for live info (news, recent docs). Returns "
             "{title, url, snippet}; use web_fetch to deep-dive a URL. "
-            "Prefer one targeted query over many reformulations. "
-            "Set deep=true for multi-step research — slower and pricier, "
-            "use sparingly."
+            "Prefer one targeted query over many reformulations."
         )
 
     @property
@@ -91,9 +89,8 @@ class WebSearchTool(BaseTool):
                 "deep": {
                     "type": "boolean",
                     "description": (
-                        "False = quick Exa-backed search (~$0.02). "
-                        "True = Perplexity sonar-deep-research multi-step "
-                        "(~$0.05-0.15)."
+                        "True for multi-step research over many sources. "
+                        "Slower; use only when a single search won't suffice."
                     ),
                     "default": False,
                 },
